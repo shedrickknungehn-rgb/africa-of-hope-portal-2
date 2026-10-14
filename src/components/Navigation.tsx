@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
-  Bell, Search, LogOut, Menu, X, ChevronDown,
+  AlertTriangle, Bell, Search, LogOut, Menu, X, ChevronDown,
   BadgeCheck, RefreshCw, Globe, Megaphone, type LucideIcon,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
@@ -10,6 +10,8 @@ import { ROLES } from "../lib/permissions";
 import { useVisiblePortalViews, portalViewLabel } from "../portalViews";
 import UserAvatar from "./UserAvatar";
 import BrandLockup from "./brand/BrandLockup";
+import { Button } from "@/components/ui/button";
+import Marquee from "./animata/container/marquee";
 
 export const panelClass =
   "rounded-2xl border border-emerald-900/10 bg-white shadow-sm shadow-emerald-900/5";
@@ -117,6 +119,39 @@ export function EmptyState({
   );
 }
 
+const statusTone: Record<string, string> = {
+  approved: "bg-emerald-100 text-emerald-800",
+  active: "bg-emerald-100 text-emerald-800",
+  completed: "bg-sky-100 text-sky-800",
+  pending: "bg-amber-100 text-amber-800",
+  submitted: "bg-amber-100 text-amber-800",
+  draft: "bg-slate-100 text-slate-700",
+  revision_requested: "bg-violet-100 text-violet-800",
+  rejected: "bg-rose-100 text-rose-700",
+  cancelled: "bg-rose-100 text-rose-700",
+};
+
+/** Capitalised status chip reused across academic planning, the learning path and progress views. */
+export function Status({ value }: { value: string }) {
+  return <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize", statusTone[value] ?? "bg-slate-100 text-slate-700")}>{value.replaceAll("_", " ")}</span>;
+}
+
+/** Shared "the backend migration isn't applied yet" / fetch-failed panel with a retry action. */
+export function SetupError({ message, retry }: { message: string; retry: () => void }) {
+  return (
+    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-950">
+      <div className="flex items-start gap-3">
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold">Academic planning is unavailable</p>
+          <p className="mt-1 text-sm text-amber-900/80">{message}</p>
+        </div>
+        <Button size="sm" variant="outline" onClick={retry}><RefreshCw className="mr-1 h-3.5 w-3.5" /> Retry</Button>
+      </div>
+    </div>
+  );
+}
+
 function sidebarGroupLabel(role: string | null): string {
   if (role === "Student") return "Student Desk";
   if (role === "Teacher") return "Instructor";
@@ -155,6 +190,61 @@ function Pop({
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * G6: a dismissible scrolling ticker of currently-visible announcements for
+ * students and teachers, shown above the portal content on every view
+ * except the Bulletin Board itself (which already lists them in full).
+ * Reuses the Marquee component and visibility rules from the public site
+ * announcement banner (audience/status/schedule window), scoped here to
+ * the signed-in user's own audience instead of "public".
+ */
+function PortalAnnouncementTicker({ onOpenBoard }: { onOpenBoard: () => void }) {
+  const { state, currentUser } = useApp();
+  const [dismissedIds, setDismissedIds] = useState<string[]>(() => {
+    try { return JSON.parse(sessionStorage.getItem("dismissed-announcement-ids") ?? "[]"); }
+    catch { return []; }
+  });
+
+  const items = useMemo(() => {
+    if (currentUser?.role !== "Student" && currentUser?.role !== "Teacher") return [];
+    const now = Date.now();
+    return state.announcements.filter((item) => {
+      const audience = item.audience ?? "all";
+      if (audience === "students" && currentUser.role !== "Student") return false;
+      if (audience === "teachers" && currentUser.role !== "Teacher") return false;
+      if (audience === "public") return false;
+      if (item.status === "draft") return false;
+      if (item.scheduledAt && new Date(item.scheduledAt).getTime() > now) return false;
+      if (item.expiresAt && new Date(item.expiresAt).getTime() <= now) return false;
+      return !dismissedIds.includes(item.id) && (item.title.trim() || item.body.trim());
+    });
+  }, [state.announcements, currentUser, dismissedIds]);
+
+  const dismiss = () => {
+    const next = [...dismissedIds, ...items.map((item) => item.id)];
+    setDismissedIds(next);
+    sessionStorage.setItem("dismissed-announcement-ids", JSON.stringify(next));
+  };
+
+  if (items.length === 0) return null;
+  return (
+    <div className="mb-3 flex items-center gap-2 overflow-hidden rounded-xl border border-amber-200 bg-amber-50 px-3 py-2" role="region" aria-label="Announcements">
+      <Megaphone className="h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
+      <div className="sr-only" aria-live="polite">{items.map((item) => `${item.title}${item.body ? ` — ${item.body}` : ""}`).join(". ")}</div>
+      <Marquee repeat={2} pauseOnHover applyMask={false} className="min-w-0 flex-1 overflow-hidden p-0 text-xs font-medium text-amber-900 [--duration:28s] [--gap:3rem]" aria-hidden="true">
+        {items.map((item) => (
+          <button key={item.id} type="button" onClick={onOpenBoard} className="whitespace-nowrap underline-offset-2 hover:underline">
+            {item.title}{item.body ? ` — ${item.body}` : ""}
+          </button>
+        ))}
+      </Marquee>
+      <button type="button" onClick={dismiss} aria-label="Dismiss announcements" className="shrink-0 rounded-full p-1 text-amber-700 hover:bg-amber-100">
+        <X className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }
@@ -431,7 +521,10 @@ export default function Navigation({
         <aside className="sticky top-16 hidden h-[calc(100dvh-4rem)] w-64 shrink-0 border-r border-emerald-900/10 bg-white/70 lg:block print:hidden">
           {sidebar}
         </aside>
-        <main className="min-w-0 flex-1 p-3 sm:p-4 lg:p-6">{children}</main>
+        <main className="min-w-0 flex-1 p-3 sm:p-4 lg:p-6">
+          {view !== "announcements" && <PortalAnnouncementTicker onOpenBoard={() => go("announcements")} />}
+          {children}
+        </main>
       </div>
 
       {drawer && (
