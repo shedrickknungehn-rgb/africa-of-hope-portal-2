@@ -51,8 +51,9 @@ export default function AnnouncementManager() {
       title: form.title.trim(), body: form.body.trim(), category: form.category,
       audience: form.audience, status: form.status,
       scheduled_at: iso(form.scheduledAt), expires_at: iso(form.expiresAt),
-      published_at: form.status === "published" ? new Date().toISOString() : null,
-      published_date: new Date().toISOString().slice(0,10), author_id: currentUser?.id ?? null,
+      published_at: form.status === "published" ? (editing?.publishedAt ?? new Date().toISOString()) : null,
+      published_date: editing?.date ?? new Date().toISOString().slice(0,10),
+      author_id: editing ? undefined : (currentUser?.id ?? null),
     };
     const result = editing ? await supabase.from("announcements").update(payload).eq("id", editing.id) : await supabase.from("announcements").insert(payload);
     setBusy(false);
