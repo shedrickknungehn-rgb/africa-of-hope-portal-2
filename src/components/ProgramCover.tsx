@@ -9,6 +9,8 @@ import {
 } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 
+const COVER_TYPES = IMAGE_TYPES.filter((t) => t !== "image/gif");
+
 /**
  * Programme cover image. Uses the admin-uploaded image when present and the
  * bundled stock photo otherwise. Pass `editable` to show upload/reset controls.
@@ -27,7 +29,7 @@ export default function ProgramCover({
 
   const upload = async (file: File | undefined) => {
     if (!file) return;
-    const invalid = validateFile(file, IMAGE_TYPES.filter((t) => t !== "image/gif"), MAX_IMAGE_BYTES);
+    const invalid = validateFile(file, COVER_TYPES, MAX_IMAGE_BYTES);
     if (invalid) {
       toast.error(invalid);
       return;
@@ -101,7 +103,7 @@ export default function ProgramCover({
           <input
             ref={input}
             type="file"
-            accept="image/jpeg,image/png,image/webp"
+            accept={COVER_TYPES.join(",")}
             className="hidden"
             onChange={(e) => void upload(e.target.files?.[0])}
           />

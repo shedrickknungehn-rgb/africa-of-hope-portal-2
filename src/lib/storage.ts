@@ -2,9 +2,9 @@ import { supabase } from "@/integrations/supabase/client";
 
 const MB = 1024 * 1024;
 
-export const AVATAR_BUCKET = "avatars";
-export const PROGRAM_IMAGE_BUCKET = "program-images";
-export const DOCUMENT_BUCKET = "documents";
+const AVATAR_BUCKET = "avatars";
+const PROGRAM_IMAGE_BUCKET = "program-images";
+const DOCUMENT_BUCKET = "documents";
 
 export const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 export const DOCUMENT_TYPES = [
@@ -125,7 +125,7 @@ export async function listDocuments(userId: string): Promise<ProfileDocument[]> 
   const folder = docFolder(userId);
   const { data, error } = await supabase.storage
     .from(DOCUMENT_BUCKET)
-    .list(folder, { limit: 100, sortBy: { column: "created_at", order: "desc" } });
+    .list(folder, { limit: 100 });
   if (error) throw new Error(explain(error.message));
   return (data ?? [])
     .filter((o) => o.id && o.name !== ".emptyFolderPlaceholder")

@@ -11,6 +11,7 @@ import { useApp, type SignUpResult } from "@/context/AppContext";
 import type { Role, User } from "@/types";
 import { programImage } from "@/lib/programImages";
 import { cn } from "@/lib/utils";
+import { INPUT_CLASS, newPasswordErrors } from "@/lib/forms";
 import { VerificationPortal } from "./CertificateVerification";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -51,11 +52,28 @@ interface FieldProps {
   labelAction?: ReactNode;
   autoFocus?: boolean;
   readOnly?: boolean;
+  max?: string;
+}
+
+export function FieldError({ id, className, children }: { id?: string; className?: string; children: ReactNode }) {
+  return (
+    <p id={id} className={cn("flex items-center gap-1 text-xs font-medium text-rose-600", className)}>
+      <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {children}
+    </p>
+  );
+}
+
+export function FormAlert({ children }: { children: ReactNode }) {
+  return (
+    <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {children}
+    </div>
+  );
 }
 
 export function AuthField({
   label, value, onChange, placeholder, type = "text", icon: Icon, error, autoComplete, hint,
-  labelAction, autoFocus, readOnly,
+  labelAction, autoFocus, readOnly, max,
 }: FieldProps) {
   const id = useId();
   const [reveal, setReveal] = useState(false);
@@ -79,14 +97,14 @@ export function AuthField({
           autoComplete={autoComplete}
           autoFocus={autoFocus}
           readOnly={readOnly}
+          max={max}
           aria-invalid={Boolean(error)}
           aria-describedby={error ? `${id}-error` : undefined}
           className={cn(
-            "h-11 w-full rounded-xl border bg-white text-sm text-slate-900 outline-none transition placeholder:text-slate-400",
-            "focus:border-emerald-600 focus:ring-4 focus:ring-emerald-600/10",
+            INPUT_CLASS,
             Icon ? "pl-10" : "pl-3.5",
             isPassword ? "pr-11" : "pr-3.5",
-            error ? "border-rose-400 focus:border-rose-500 focus:ring-rose-500/10" : "border-slate-200",
+            error && "border-rose-400 focus:border-rose-500 focus:ring-rose-500/10",
             readOnly && "cursor-not-allowed bg-slate-50 text-slate-500 focus:border-slate-200 focus:ring-0",
           )}
         />
@@ -102,9 +120,7 @@ export function AuthField({
         )}
       </div>
       {error ? (
-        <p id={`${id}-error`} className="flex items-center gap-1 text-xs font-medium text-rose-600">
-          <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
-        </p>
+        <FieldError id={`${id}-error`}>{error}</FieldError>
       ) : (
         hint
       )}
@@ -318,9 +334,7 @@ function SignInForm({
   return (
     <form onSubmit={submit} noValidate className="space-y-4">
       {errors.form && (
-        <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {errors.form}
-        </div>
+        <FormAlert>{errors.form}</FormAlert>
       )}
       <AuthField
         label="Email address"
@@ -441,8 +455,9 @@ function RegisterForm({ onDone }: { onDone: (email: string, status: DoneStatus) 
       if (reg.name.trim().length < 3) e.name = "Enter your full name";
       if (!EMAIL_RE.test(reg.email.trim())) e.email = "Enter a valid email address";
       if (reg.phone.replace(/\D/g, "").length < 7) e.phone = "Enter a valid phone number";
-      if (reg.password.length < 8) e.password = "Use at least 8 characters";
-      if (reg.confirm !== reg.password) e.confirm = "Passwords do not match";
+      const pw = newPasswordErrors(reg.password, reg.confirm);
+      if (pw.a) e.password = pw.a;
+      if (pw.b) e.confirm = pw.b;
     }
     if (s === 1 && state.programs.length > 0 && reg.programIds.length === 0) {
       e.programIds = "Select at least one programme";
@@ -505,9 +520,7 @@ function RegisterForm({ onDone }: { onDone: (email: string, status: DoneStatus) 
       <Stepper step={step} steps={STEPS} />
 
       {errors.form && (
-        <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {errors.form}
-        </div>
+        <FormAlert>{errors.form}</FormAlert>
       )}
 
       <AnimatePresence mode="wait" initial={false}>
@@ -556,7 +569,7 @@ function RegisterForm({ onDone }: { onDone: (email: string, status: DoneStatus) 
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search programmes"
                   aria-label="Search programmes"
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-3.5 text-sm outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-600/10"
+                  className={cn(INPUT_CLASS, "pl-10 pr-3.5")}
                 />
               </div>
               <div className="grid max-h-[22rem] gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
@@ -605,9 +618,7 @@ function RegisterForm({ onDone }: { onDone: (email: string, status: DoneStatus) 
                 })}
               </div>
               {errors.programIds && (
-                <p className="flex items-center gap-1 text-xs font-medium text-rose-600">
-                  <AlertCircle className="h-3.5 w-3.5" /> {errors.programIds}
-                </p>
+                <FieldError>{errors.programIds}</FieldError>
               )}
             </div>
           )}
@@ -651,9 +662,7 @@ function RegisterForm({ onDone }: { onDone: (email: string, status: DoneStatus) 
                 </span>
               </label>
               {errors.agree && (
-                <p className="-mt-2 flex items-center gap-1 text-xs font-medium text-rose-600">
-                  <AlertCircle className="h-3.5 w-3.5" /> {errors.agree}
-                </p>
+                <FieldError className="-mt-2">{errors.agree}</FieldError>
               )}
             </>
           )}
@@ -769,9 +778,7 @@ export function PasswordRecoveryDialog() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const next: typeof errors = {};
-    if (pw.a.length < 8) next.a = "Use at least 8 characters";
-    if (pw.a !== pw.b) next.b = "Passwords do not match";
+    const next = newPasswordErrors(pw.a, pw.b);
     setErrors(next);
     if (Object.keys(next).length) return;
     setBusy(true);
@@ -821,11 +828,10 @@ export default function AuthPortal({
   const [resetEmail, setResetEmail] = useState("");
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [done, setDone] = useState<{ email: string; status: "confirm_email" | "application_only" } | null>(null);
-  const confirmEmail = done?.email ?? null;
 
   const heading =
     done ? (done.status === "confirm_email" ? "Confirm your email" : "Application received") : tab === "signin" ? "Welcome back" : "Create your account";
-  const sub = confirmEmail
+  const sub = done
     ? ""
     : tab === "signin"
       ? "Sign in to manage your courses, grades and certificates."
@@ -864,21 +870,21 @@ export default function AuthPortal({
             </div>
 
             <div className="rounded-3xl border border-emerald-900/10 bg-white p-5 shadow-xl shadow-emerald-900/5 sm:p-7">
-              {confirmEmail ? (
+              {done ? (
                 <div className="text-center">
                   <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-emerald-50">
                     <MailCheck className="h-7 w-7 text-emerald-700" />
                   </span>
-                  {done?.status === "confirm_email" ? (
+                  {done.status === "confirm_email" ? (
                     <p className="mt-4 text-sm text-slate-600">
                       We sent a confirmation link to{" "}
-                      <span className="font-semibold text-slate-900">{confirmEmail}</span>. Confirm your email, then
+                      <span className="font-semibold text-slate-900">{done.email}</span>. Confirm your email, then
                       sign in. The registrar will review your application.
                     </p>
                   ) : (
                     <p className="mt-4 text-sm text-slate-600">
                       Thank you. The registrar will review your application and contact you at{" "}
-                      <span className="font-semibold text-slate-900">{confirmEmail}</span> with your portal access.
+                      <span className="font-semibold text-slate-900">{done.email}</span> with your portal access.
                     </p>
                   )}
                   <Button

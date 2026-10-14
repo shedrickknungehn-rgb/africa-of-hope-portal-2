@@ -119,6 +119,13 @@ interface AppContextValue {
   resetDemoData: () => void;
 }
 
+/** Explains errors caused by the profile/programme-image migration not being applied yet. */
+function migrationHint(message: string, feature: string): string {
+  return /column .* does not exist|schema cache/i.test(message)
+    ? `${feature} are not set up yet. Ask an administrator to apply the latest database migration.`
+    : message;
+}
+
 const AppContext = createContext<AppContextValue | null>(null);
 
 function normalize(raw: Partial<AppState> | null): AppState {
@@ -393,9 +400,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (patch.avatarUrl !== undefined) row.avatar_url = patch.avatarUrl;
         const { data, error } = await supabase.from("profiles").update(row).eq("id", id).select("id");
         if (error) {
-          return /column .* does not exist|schema cache/i.test(error.message)
-            ? "Profile fields are not set up yet. Ask an administrator to apply the latest database migration."
-            : error.message;
+          return migrationHint(error.message, "Profile fields");
         }
         if (!data?.length) return "You do not have permission to edit this profile. Sign in again and retry.";
         const local: Partial<User> = {
@@ -417,9 +422,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           .eq("id", id)
           .select("id");
         if (error) {
-          return /column .* does not exist|schema cache/i.test(error.message)
-            ? "Programme images are not set up yet. Ask an administrator to apply the latest database migration."
-            : error.message;
+          return migrationHint(error.message, "Programme images");
         }
         if (!data?.length) return "You do not have permission to edit this programme.";
         setState((s) => ({

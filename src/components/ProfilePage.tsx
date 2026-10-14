@@ -15,6 +15,7 @@ import {
 } from "@/lib/storage";
 import { panelClass, Reveal, SectionHeader } from "./Navigation";
 import { AuthField } from "./AuthPortal";
+import { INPUT_CLASS, newPasswordErrors } from "@/lib/forms";
 import UserAvatar from "./UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -236,7 +237,7 @@ function DetailsForm({ user }: { user: User }) {
         />
         <AuthField label="Phone" icon={Phone} type="tel" autoComplete="tel" value={form.phone} onChange={set("phone")} placeholder="+231 77 000 0000" error={errors.phone} />
         <AuthField label="Job title or headline" icon={UserCircle} value={form.title} onChange={set("title")} placeholder="e.g. Graphic design student" />
-        <DateField label="Date of birth" value={form.dateOfBirth} max={today} onChange={set("dateOfBirth")} />
+        <AuthField label="Date of birth" icon={CalendarDays} type="date" max={today} value={form.dateOfBirth} onChange={set("dateOfBirth")} />
         <AuthField label="Address" icon={MapPin} autoComplete="street-address" value={form.address} onChange={set("address")} placeholder="Street, city, county" />
         <div className="space-y-1.5 md:col-span-2">
           <div className="flex items-center justify-between">
@@ -263,25 +264,6 @@ function DetailsForm({ user }: { user: User }) {
         </Button>
       </div>
     </form>
-  );
-}
-
-function DateField({ label, value, onChange, max }: { label: string; value: string; onChange: (v: string) => void; max?: string }) {
-  return (
-    <div className="space-y-1.5">
-      <label htmlFor="profile-dob" className="flex min-h-5 items-center text-sm font-medium text-slate-700">{label}</label>
-      <div className="relative">
-        <CalendarDays className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-        <input
-          id="profile-dob"
-          type="date"
-          value={value}
-          max={max}
-          onChange={(e) => onChange(e.target.value)}
-          className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-3.5 text-sm text-slate-900 outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-600/10"
-        />
-      </div>
-    </div>
   );
 }
 
@@ -381,7 +363,7 @@ function DocumentsPanel({ user }: { user: User }) {
             id="doc-category"
             value={category}
             onChange={(e) => setCategory(e.target.value as DocumentCategory)}
-            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-600/10"
+            className={cn(INPUT_CLASS, "px-3.5")}
           >
             {DOCUMENT_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
@@ -534,9 +516,7 @@ function SecurityPanel({ user }: { user: User }) {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const next: typeof errors = {};
-    if (pw.a.length < 8) next.a = "Use at least 8 characters";
-    if (pw.a !== pw.b) next.b = "Passwords do not match";
+    const next = newPasswordErrors(pw.a, pw.b);
     setErrors(next);
     if (Object.keys(next).length) return;
     setBusy(true);

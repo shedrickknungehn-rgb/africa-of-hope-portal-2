@@ -101,17 +101,12 @@ create policy avatars_public_read on storage.objects for select
   using (bucket_id = 'avatars');
 
 drop policy if exists avatars_owner_write on storage.objects;
-create policy avatars_owner_write on storage.objects for insert to authenticated
-  with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
-
 drop policy if exists avatars_owner_update on storage.objects;
-create policy avatars_owner_update on storage.objects for update to authenticated
+drop policy if exists avatars_owner_delete on storage.objects;
+drop policy if exists avatars_owner_all on storage.objects;
+create policy avatars_owner_all on storage.objects for all to authenticated
   using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text)
   with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
-
-drop policy if exists avatars_owner_delete on storage.objects;
-create policy avatars_owner_delete on storage.objects for delete to authenticated
-  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
 
 -- program-images: public read, admins manage
 drop policy if exists program_images_public_read on storage.objects;
