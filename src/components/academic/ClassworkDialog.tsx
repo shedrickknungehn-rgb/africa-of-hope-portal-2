@@ -18,12 +18,13 @@ function formatCountdown(ms: number): string {
     : `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function draftKey(assignmentId: string): string {
-  return `classwork-draft-${assignmentId}`;
+/** Keyed by student too, so a shared browser never shows one student's draft to another. */
+function draftKey(studentId: string, assignmentId: string): string {
+  return `classwork-draft-${studentId}-${assignmentId}`;
 }
 
-function readDraft(assignmentId: string): string {
-  try { return sessionStorage.getItem(draftKey(assignmentId)) ?? ""; } catch { return ""; }
+function readDraft(studentId: string, assignmentId: string): string {
+  try { return sessionStorage.getItem(draftKey(studentId, assignmentId)) ?? ""; } catch { return ""; }
 }
 
 /**
@@ -32,13 +33,12 @@ function readDraft(assignmentId: string): string {
  * only skips straight to the live view when resuming a submission that is
  * already "In Progress" server-side. Once started, `start_classwork` is
  * idempotent — resuming never restarts the clock. The live countdown
- * corrects for client clock skew on a fresh start (using the offset between
- * the server's `started_at` and the moment the response arrived); on resume
- * it simply uses the server's `deadline_at` against the client clock,
- * which is the common case anyway. The server remains the source of truth
+ * corrects for client clock skew with the server's `server_now` (compared
+ * with the midpoint of the request round trip), so a wrong device clock or a
+ * cancel-and-reopen never shows extra time. The server remains the source of truth
  * for lateness and the time limit — the countdown is a courtesy, not an
  * enforcement mechanism. The response text is saved to sessionStorage keyed
- * by assignment id so a refresh or accidental close doesn't lose a draft.
+ * by student and assignment id so a refresh or accidental close doesn't lose a draft.
  */
 export default function ClassworkDialog({
   onOpenChange,
@@ -62,7 +62,7 @@ export default function ClassworkDialog({
   const [start, setStart] = useState<ClassworkStart | null>(null);
   const [clockOffsetMs, setClockOffsetMs] = useState(0);
   const [error, setError] = useState("");
-  const [responseText, setResponseText] = useState(() => readDraft(assignmentId));
+  const [responseText, setResponseText] = useState(() => readDraft(studentId, assignmentId));
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -74,7 +74,7 @@ export default function ClassworkDialog({
   useEffect(() => {
     if (!confirmed) return;
     let active = true;
-    const receivedAt = Date.now();
+    const sentAt = Date.now();
     setStarting(true);
     setError("");
     (async () => {
@@ -82,10 +82,8 @@ export default function ClassworkDialog({
         const result = await academicApi.startClasswork(assignmentId);
         if (!active) return;
         setStart(result);
-        if (!resuming) {
-          const serverStarted = new Date(result.started_at).getTime();
-          if (Number.isFinite(serverStarted)) setClockOffsetMs(serverStarted - receivedAt);
-        }
+        const serverNow = result.server_now ? new Date(result.server_now).getTime() : NaN;
+        if (Number.isFinite(serverNow)) setClockOffsetMs(serverNow - (sentAt + Date.now()) / 2);
       } catch (err) {
         if (active) setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -93,7 +91,7 @@ export default function ClassworkDialog({
       }
     })();
     return () => { active = false; };
-  }, [confirmed, assignmentId, resuming]);
+  }, [confirmed, assignmentId]);
 
   useEffect(() => {
     if (!start?.deadline_at) return;
@@ -103,10 +101,10 @@ export default function ClassworkDialog({
 
   useEffect(() => {
     try {
-      if (responseText) sessionStorage.setItem(draftKey(assignmentId), responseText);
-      else sessionStorage.removeItem(draftKey(assignmentId));
+      if (responseText) sessionStorage.setItem(draftKey(studentId, assignmentId), responseText);
+      else sessionStorage.removeItem(draftKey(studentId, assignmentId));
     } catch { /* sessionStorage may be unavailable (private mode, quota) */ }
-  }, [assignmentId, responseText]);
+  }, [studentId, assignmentId, responseText]);
 
   const deadlineMs = start?.deadline_at ? new Date(start.deadline_at).getTime() : null;
   const correctedNow = nowMs + clockOffsetMs;
@@ -129,7 +127,7 @@ export default function ClassworkDialog({
     try {
       const uploaded = file ? await academicApi.uploadClassworkAttachment(assignmentId, studentId, file) : null;
       const result = await academicApi.submitClasswork(assignmentId, responseText.trim(), uploaded?.path ?? null);
-      try { sessionStorage.removeItem(draftKey(assignmentId)); } catch { /* ignore */ }
+      try { sessionStorage.removeItem(draftKey(studentId, assignmentId)); } catch { /* ignore */ }
       toast.success(result.is_late ? "Classwork submitted — marked late." : "Classwork submitted.");
       onSubmitted();
     } catch (err) {

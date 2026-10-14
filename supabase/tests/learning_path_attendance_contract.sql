@@ -50,6 +50,10 @@ GRANT EXECUTE ON FUNCTION pg_temp.record_result(text, boolean, text) TO authenti
 \ir ../migrations/20261014090000_learning_path_attendance_fixes.sql
 \echo Applying fix migration idempotency pass (inside same transaction)
 \ir ../migrations/20261014090000_learning_path_attendance_fixes.sql
+\echo Applying progress-locking migration first pass (inside same transaction)
+\ir ../migrations/20261014100000_learning_progress_locking.sql
+\echo Applying progress-locking migration idempotency pass (inside same transaction)
+\ir ../migrations/20261014100000_learning_progress_locking.sql
 
 -- Fixed, non-production identities. They exist only until the ROLLBACK below.
 INSERT INTO auth.users (
@@ -686,10 +690,58 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
+-- start_classwork never restarts a timer that already has started_at, and returns server_now.
+RESET ROLE;
+SELECT set_config('request.jwt.claim.role', 'authenticated', true);
+SELECT set_config('request.jwt.claim.sub', '11000000-0000-0000-0000-000000000001', true);
+UPDATE public.submissions SET status = 'Missing', started_at = now() - interval '30 minutes'
+WHERE assignment_id = '34000000-0000-0000-0000-000000000004' AND student_id = '11000000-0000-0000-0000-000000000001';
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE result jsonb; expected timestamptz;
+BEGIN
+  SELECT started_at INTO expected FROM public.submissions
+  WHERE assignment_id = '34000000-0000-0000-0000-000000000004' AND student_id = '11000000-0000-0000-0000-000000000001';
+  SELECT public.start_classwork('34000000-0000-0000-0000-000000000004'::uuid) INTO result;
+  PERFORM pg_temp.record_result(
+    '27 RPC: start_classwork keeps an existing started_at and returns server_now',
+    (result ->> 'started_at')::timestamptz = expected AND result ->> 'server_now' IS NOT NULL,
+    result::text
+  );
+EXCEPTION WHEN OTHERS THEN
+  PERFORM pg_temp.record_result('27 RPC: start_classwork keeps an existing started_at and returns server_now', false, SQLSTATE || ': ' || SQLERRM);
+END;
+$$;
+RESET ROLE;
+
+-- After course_window_closed is sent, a recompute keeps completion_status.
+DO $$
+DECLARE final_status text;
+BEGIN
+  UPDATE public.course_enrollments SET completion_status = 'completed_pending_review'
+  WHERE id = '32000000-0000-0000-0000-000000000002';
+  INSERT INTO public.notifications (recipient_id, kind, title, body, entity_type, entity_id)
+  SELECT '11000000-0000-0000-0000-000000000001', 'course_window_closed', 'Course window closed', 'test', 'enrollment', '32000000-0000-0000-0000-000000000002'
+  WHERE NOT EXISTS (
+    SELECT 1 FROM public.notifications WHERE kind = 'course_window_closed' AND entity_type = 'enrollment'
+      AND entity_id = '32000000-0000-0000-0000-000000000002'
+  );
+  PERFORM public._recompute_cohort_progress('31000000-0000-0000-0000-000000000002');
+  SELECT completion_status INTO final_status FROM public.course_enrollments WHERE id = '32000000-0000-0000-0000-000000000002';
+  PERFORM pg_temp.record_result(
+    '28 trigger: recompute keeps completion_status after the course window closed',
+    final_status = 'completed_pending_review',
+    'final_status=' || coalesce(final_status, 'null')
+  );
+EXCEPTION WHEN OTHERS THEN
+  PERFORM pg_temp.record_result('28 trigger: recompute keeps completion_status after the course window closed', false, SQLSTATE || ': ' || SQLERRM);
+END;
+$$;
+
 -- Surface all assertion outcomes before rollback. This SELECT does not persist.
 SELECT name, passed, detail FROM pg_temp.test_results ORDER BY name;
 SELECT count(*) AS failed_contracts FROM pg_temp.test_results WHERE NOT passed;
-SELECT CASE WHEN count(*) = 26 AND bool_and(passed) THEN 'true' ELSE 'false' END AS contracts_passed
+SELECT CASE WHEN count(*) = 28 AND bool_and(passed) THEN 'true' ELSE 'false' END AS contracts_passed
 FROM pg_temp.test_results
 \gset
 

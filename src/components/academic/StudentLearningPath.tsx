@@ -264,7 +264,12 @@ export default function StudentLearningPath({
       <MaterialPreviewDialog material={preview} open={!!preview} onOpenChange={(open) => !open && setPreview(null)} />
       {classwork && currentUser && (
         <ClassworkDialog
-          onOpenChange={(open) => !open && setClasswork(null)}
+          onOpenChange={(open) => {
+            if (open) return;
+            setClasswork(null);
+            // A started timer makes the next open a resume, so pick up the new In Progress row.
+            void refresh();
+          }}
           assignmentId={classwork.assignmentId}
           studentId={currentUser.id}
           unitTitle={classwork.unit.title}

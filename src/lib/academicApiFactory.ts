@@ -148,6 +148,8 @@ export interface ClassworkStart {
   deadline_at: string | null;
   time_limit_minutes: number | null;
   status: ClassworkStatus;
+  /** Server clock at the call, for client clock-skew correction. */
+  server_now?: string;
 }
 
 export interface ClassworkSubmitResult {
