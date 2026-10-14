@@ -15,12 +15,10 @@
 -- Usage once authorized (do not use `-1`, which would conflict with this BEGIN):
 --   psql "$DATABASE_URL" -X -f academic_migration_rollback_contract.sql
 --
--- `ON_ERROR_STOP` remains off specifically so psql reaches the final ROLLBACK if
--- an expected contract assertion or migration statement fails. Inspect ERROR lines
--- plus the `test_results` output; the calling wrapper should fail if any row has
--- passed = false.
+-- `ON_ERROR_STOP` ensures a top-level SQL error returns a nonzero status. If psql
+-- disconnects before the explicit ROLLBACK, PostgreSQL rolls back the transaction.
 
-\set ON_ERROR_STOP off
+\set ON_ERROR_STOP on
 \pset pager off
 \pset tuples_only off
 
@@ -310,7 +308,9 @@ BEGIN
   PERFORM pg_temp.record_result('trigger: approval creates own notification', notification_rows >= 1, 'visible rows=' || notification_rows);
   PERFORM pg_temp.record_result('trigger: approval adds student to roster', roster_rows = 1, 'active rows=' || roster_rows);
 EXCEPTION WHEN OTHERS THEN
-  PERFORM pg_temp.record_result('RLS/trigger: approved student contracts', false, SQLSTATE || ': ' || SQLERRM);
+  PERFORM pg_temp.record_result('RLS: student reads approved material', false, SQLSTATE || ': ' || SQLERRM);
+  PERFORM pg_temp.record_result('trigger: approval creates own notification', false, SQLSTATE || ': ' || SQLERRM);
+  PERFORM pg_temp.record_result('trigger: approval adds student to roster', false, SQLSTATE || ': ' || SQLERRM);
 END;
 $$;
 RESET ROLE;
@@ -318,14 +318,17 @@ RESET ROLE;
 -- Surface all assertion outcomes before rollback. This SELECT does not persist.
 SELECT name, passed, detail FROM pg_temp.test_results ORDER BY name;
 SELECT count(*) AS failed_contracts FROM pg_temp.test_results WHERE NOT passed;
-SELECT CASE
-  WHEN count(*) = 0 THEN 'ACADEMIC_CONTRACT_RESULT:PASS'
-  ELSE 'ACADEMIC_CONTRACT_RESULT:FAIL:' || count(*)::text
-END AS academic_contract_result
+SELECT CASE WHEN count(*) = 14 AND bool_and(passed) THEN 'true' ELSE 'false' END AS contracts_passed
 FROM pg_temp.test_results
-WHERE NOT passed;
+\gset
 
 -- Mandatory final statement: all migration DDL, fixture auth accounts, metadata,
 -- RLS policies, bucket changes, triggers, and synthetic domain rows are discarded.
 ROLLBACK;
 \echo ROLLBACK completed: no transaction-scoped changes were committed.
+\if :contracts_passed
+\echo ACADEMIC_CONTRACT_RESULT:PASS
+\else
+\echo ACADEMIC_CONTRACT_RESULT:FAIL
+\quit 1
+\endif

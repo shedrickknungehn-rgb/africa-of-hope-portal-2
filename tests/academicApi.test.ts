@@ -6,12 +6,26 @@ import {
   explainAcademicError,
   safeTrainingMaterialName,
   trainingMaterialPath,
-} from "../src/lib/academics.ts";
+} from "../src/lib/academicApiFactory.ts";
+import type { AcademicApiClient } from "../src/lib/academicApiFactory.ts";
 
 type Response = { data: unknown; error: { message: string; details?: string | null } | null };
 
 function query(response: Response, calls: Array<[string, ...unknown[]]>) {
-  const request: any = {
+  type MockRequest = {
+    select: (...args: unknown[]) => MockRequest;
+    insert: (...args: unknown[]) => MockRequest;
+    update: (...args: unknown[]) => MockRequest;
+    eq: (...args: unknown[]) => MockRequest;
+    in: (...args: unknown[]) => MockRequest;
+    order: (...args: unknown[]) => MockRequest;
+    limit: (...args: unknown[]) => MockRequest;
+    or: (...args: unknown[]) => MockRequest;
+    single: () => Promise<Response>;
+    then: (resolve: (value: Response) => unknown, reject: (reason: unknown) => unknown) => Promise<unknown>;
+  };
+  const request = {} as MockRequest;
+  Object.assign(request, {
     select(...args: unknown[]) { calls.push(["select", ...args]); return request; },
     insert(...args: unknown[]) { calls.push(["insert", ...args]); return request; },
     update(...args: unknown[]) { calls.push(["update", ...args]); return request; },
@@ -24,7 +38,7 @@ function query(response: Response, calls: Array<[string, ...unknown[]]>) {
     then(resolve: (value: Response) => unknown, reject: (reason: unknown) => unknown) {
       return Promise.resolve(response).then(resolve, reject);
     },
-  };
+  });
   return request;
 }
 
@@ -33,7 +47,7 @@ function mockClient(options: { response?: Response; rpcResponse?: Response; stor
   const response = options.response ?? { data: [], error: null };
   const rpcResponse = options.rpcResponse ?? { data: null, error: null };
   const storageResponse = options.storageResponse ?? { data: {}, error: null };
-  const client: any = {
+  const client = {
     from(table: string) { calls.push(["from", table]); return query(response, calls); },
     async rpc(name: string, args: unknown) { calls.push(["rpc", name, args]); return rpcResponse; },
     storage: {
@@ -47,7 +61,7 @@ function mockClient(options: { response?: Response; rpcResponse?: Response; stor
       },
     },
   };
-  return { client, calls };
+  return { client: client as unknown as AcademicApiClient, calls };
 }
 
 test("translates academic database errors into actionable messages", () => {
@@ -77,7 +91,7 @@ test("maps the complete lesson bundle payload to the atomic RPC", async () => {
   await api.createUnitWithAssessments({
     program_id: "program-1", cohort_id: "cohort-1", course_plan_id: "plan-1", title: "Safety",
     summary: "Coverage", unit_type: "topic", position: 2, available_from: null, due_at: "2026-10-20T23:59:00.000Z",
-  }, { classworkTitle: "ignored", dueDate: "2026-10-20", maxMarks: 100, classworkMinutes: 30, classworkWeight: 40, quizMinutes: 15, quizWeight: 60 });
+  }, { classworkMinutes: 30, classworkWeight: 40, quizMinutes: 15, quizWeight: 60 });
   assert.deepEqual(calls.find(([name]) => name === "rpc"), ["rpc", "create_academic_lesson_bundle", {
     p_program_id: "program-1", p_cohort_id: "cohort-1", p_course_plan_id: "plan-1", p_title: "Safety",
     p_summary: "Coverage", p_unit_type: "topic", p_position: 2, p_due_at: "2026-10-20T23:59:00.000Z",
