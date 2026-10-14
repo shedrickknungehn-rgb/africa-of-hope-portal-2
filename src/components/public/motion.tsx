@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { motion, useReducedMotion, type Variants } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { EASE, fadeUpVariants, staggerContainer } from "./motionConstants";
 
 /**
@@ -66,18 +66,16 @@ export function StaggerGroup({
 export function MotionCard({
   children,
   className,
-  variants,
 }: {
   children: ReactNode;
   className?: string;
-  variants?: Variants;
 }) {
   const reduce = useReducedMotion();
   if (reduce) return <div className={className}>{children}</div>;
   return (
     <motion.div
       className={className}
-      variants={variants ?? fadeUpVariants}
+      variants={fadeUpVariants}
       whileHover={{ y: -6, transition: { duration: 0.2, ease: EASE } }}
     >
       {children}

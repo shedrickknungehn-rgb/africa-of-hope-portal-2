@@ -10,6 +10,7 @@
     "tests/**/*.ts",
     "src/lib/academicApiFactory.ts",
     "src/lib/blog.ts",
+    "src/lib/blogPublic.ts",
     "src/lib/payments.ts",
     "src/lib/emailOutbox.ts"
   ]

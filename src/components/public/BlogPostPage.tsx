@@ -28,7 +28,16 @@ function BodyParagraphs({ body }: { body: string }) {
   );
 }
 
-async function shareOrCopy(title: string) {
+async function copyLink() {
+  try {
+    await navigator.clipboard.writeText(window.location.href);
+    toast.success("Link copied to clipboard");
+  } catch {
+    toast.error("Could not copy the link");
+  }
+}
+
+async function share(title: string) {
   const url = window.location.href;
   if (navigator.share) {
     try {
@@ -38,12 +47,7 @@ async function shareOrCopy(title: string) {
       // user cancelled or share failed — fall through to copy
     }
   }
-  try {
-    await navigator.clipboard.writeText(url);
-    toast.success("Link copied to clipboard");
-  } catch {
-    toast.error("Could not copy the link");
-  }
+  await copyLink();
 }
 
 export default function BlogPostPage({ slug }: { slug: string }) {
@@ -129,14 +133,14 @@ export default function BlogPostPage({ slug }: { slug: string }) {
             </span>
             <button
               type="button"
-              onClick={() => shareOrCopy(post.title)}
+              onClick={() => share(post.title)}
               className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 font-semibold text-emerald-800 ring-1 ring-emerald-900/15 transition hover:bg-emerald-50"
             >
               <Share2 className="h-3.5 w-3.5" /> Share
             </button>
             <button
               type="button"
-              onClick={() => shareOrCopy(post.title)}
+              onClick={() => copyLink()}
               className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 font-semibold text-emerald-800 ring-1 ring-emerald-900/15 transition hover:bg-emerald-50"
             >
               <Link2 className="h-3.5 w-3.5" /> Copy link

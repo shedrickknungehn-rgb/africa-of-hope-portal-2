@@ -117,7 +117,6 @@ export function EmptyState({
   );
 }
 
-
 function sidebarGroupLabel(role: string | null): string {
   if (role === "Student") return "Student Desk";
   if (role === "Teacher") return "Instructor";
@@ -254,13 +253,14 @@ export default function Navigation({
             <Menu className="h-5 w-5" />
           </button>
 
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <BrandLockup
               logoUrl={state.websiteSettings.logoUrl}
               academyName={state.websiteSettings.academyName || state.settings.academyName}
               tagline={state.websiteSettings.tagline || "Institutional Training Academy"}
               tone="light"
               size="md"
+              taglineClassName="hidden sm:block"
             />
           </div>
 

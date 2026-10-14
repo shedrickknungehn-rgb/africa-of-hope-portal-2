@@ -54,6 +54,19 @@ const emptyForm: FormState = {
   body: "", featured: false, coverImageUrl: null, coverImagePath: null,
 };
 
+/**
+ * Formats a UTC ISO timestamp for an `<input type="datetime-local">`, which
+ * always displays/parses in the browser's LOCAL time. A naive `.slice(0,16)`
+ * of the UTC string would show the UTC wall-clock time mislabelled as local,
+ * so this converts to local time first.
+ */
+function toDatetimeLocalValue(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** Renders plain-text body as paragraphs (blank-line separated); JSX text nodes escape automatically. */
 function BodyPreview({ body }: { body: string }) {
   const paragraphs = body.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
@@ -68,7 +81,7 @@ function BodyPreview({ body }: { body: string }) {
 }
 
 export default function BlogManager() {
-  const { currentUser } = useApp();
+  const { currentUser, reloadKey } = useApp();
   const canManage = usePermission("blog.manage");
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -98,7 +111,7 @@ export default function BlogManager() {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [reloadKey]);
 
   const filtered = useMemo(() => {
     return posts.filter((p) => {
@@ -135,8 +148,9 @@ export default function BlogManager() {
       coverImageUrl: post.coverImageUrl, coverImagePath: post.coverImagePath,
     });
     setAction(post.status === "archived" ? "draft" : post.status === "scheduled" ? "schedule" : post.status === "published" ? "publish" : "draft");
-    setScheduledAt(post.publishedAt ? post.publishedAt.slice(0, 16) : "");
+    setScheduledAt(post.publishedAt ? toDatetimeLocalValue(post.publishedAt) : "");
     setCoverFile(null);
+    revokeCoverPreview();
     setCoverPreview(post.coverImageUrl);
     setOpen(true);
   };
@@ -145,20 +159,50 @@ export default function BlogManager() {
     setForm((f) => ({ ...f, title, slug: f.slugTouched ? f.slug : slugify(title) }));
   };
 
+  // The slug box keeps the raw text the user is typing (so a trailing
+  // hyphen, or typing out of character order, isn't fought on every
+  // keystroke) and only normalises it to a URL-safe slug on blur; `save()`
+  // slugifies again regardless as the final safety net.
+  const onSlugChange = (raw: string) => {
+    setForm((f) => ({ ...f, slug: raw, slugTouched: true }));
+  };
+  const onSlugBlur = () => {
+    setForm((f) => ({ ...f, slug: slugify(f.slug) }));
+  };
+
+  // Blob preview URLs from `URL.createObjectURL` must be revoked once
+  // replaced or no longer needed, or every cover selection leaks memory.
+  const revokeCoverPreview = () => {
+    setCoverPreview((prev) => {
+      if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+      return prev;
+    });
+  };
+
   const onCoverSelected = (file: File | null) => {
     setCoverFile(file);
-    if (!file) { setCoverPreview(form.coverImageUrl); return; }
-    setCoverPreview(URL.createObjectURL(file));
+    setCoverPreview((prev) => {
+      if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+      return file ? URL.createObjectURL(file) : form.coverImageUrl;
+    });
   };
+
+  // Revoke any outstanding blob preview URL when the dialog closes or the component unmounts.
+  useEffect(() => {
+    if (open) return;
+    revokeCoverPreview();
+  }, [open]);
+  useEffect(() => () => revokeCoverPreview(), []);
 
   const save = async () => {
     if (!form.title.trim()) { toast.error("Title is required."); return; }
     if (action === "schedule" && !scheduledAt) { toast.error("Choose a date and time to publish this post."); return; }
     setBusy(true);
     try {
+      const slug = slugify(form.slug.trim() || form.title);
       const draft: BlogDraftInput = {
         title: form.title.trim(),
-        slug: form.slug.trim() || undefined,
+        slug,
         excerpt: form.excerpt.trim(),
         body: form.body,
         category: form.category || "News",
@@ -166,18 +210,34 @@ export default function BlogManager() {
         featured: form.featured,
         coverImageUrl: form.coverImageUrl,
         coverImagePath: form.coverImagePath,
-        authorId: currentUser?.id ?? null,
-        authorName: currentUser?.name ?? "",
       };
+      // Author fields are set once at creation only — editing a post must
+      // never reassign it to whoever happens to be editing it.
+      if (!editing) {
+        draft.authorId = currentUser?.id ?? null;
+        draft.authorName = currentUser?.name ?? "";
+      }
+      let oldCoverPathToDelete: string | null = null;
       if (coverFile) {
-        const uploaded = editing?.coverImagePath
-          ? await blogApi.replaceCover(coverFile, form.slug || form.title, editing.coverImagePath)
-          : await blogApi.uploadCover(coverFile, form.slug || form.title);
+        const uploaded = await blogApi.uploadCover(coverFile, slug);
         draft.coverImageUrl = uploaded.url;
         draft.coverImagePath = uploaded.path;
+        // The old cover is only deleted once the post row save below
+        // actually succeeds — never before — so a failed save never leaves
+        // the post without any cover on file.
+        if (editing?.coverImagePath && editing.coverImagePath !== uploaded.path) {
+          oldCoverPathToDelete = editing.coverImagePath;
+        }
       }
       if (editing) {
-        await blogApi.update(editing.id, draft, action, scheduledAt || undefined);
+        await blogApi.update(
+          editing.id,
+          draft,
+          action,
+          scheduledAt || undefined,
+          { status: editing.status, publishedAt: editing.publishedAt },
+          oldCoverPathToDelete,
+        );
       } else {
         await blogApi.create(draft, action, scheduledAt || undefined);
       }
@@ -281,39 +341,39 @@ export default function BlogManager() {
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <Label>Title</Label>
-              <Input value={form.title} onChange={(e) => onTitleChange(e.target.value)} placeholder="New computer lab opens for students" />
+              <Label htmlFor="blog-title">Title</Label>
+              <Input id="blog-title" value={form.title} onChange={(e) => onTitleChange(e.target.value)} placeholder="New computer lab opens for students" />
             </div>
             <div className="space-y-1.5">
-              <Label>URL slug</Label>
-              <Input value={form.slug} onChange={(e) => setForm((f) => ({ ...f, slug: slugify(e.target.value), slugTouched: true }))} placeholder="new-computer-lab-opens-for-students" />
+              <Label htmlFor="blog-slug">URL slug</Label>
+              <Input id="blog-slug" value={form.slug} onChange={(e) => onSlugChange(e.target.value)} onBlur={onSlugBlur} placeholder="new-computer-lab-opens-for-students" />
               <p className="text-xs text-slate-400">A unique suffix is added automatically if this slug is already used.</p>
             </div>
             <div className="space-y-1.5">
-              <Label>Excerpt</Label>
-              <Textarea rows={2} value={form.excerpt} onChange={(e) => setForm((f) => ({ ...f, excerpt: e.target.value }))} placeholder="Short summary shown on the blog list and link previews." />
+              <Label htmlFor="blog-excerpt">Excerpt</Label>
+              <Textarea id="blog-excerpt" rows={2} value={form.excerpt} onChange={(e) => setForm((f) => ({ ...f, excerpt: e.target.value }))} placeholder="Short summary shown on the blog list and link previews." />
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label>Category</Label>
+                <Label htmlFor="blog-category">Category</Label>
                 <Select value={form.category} onValueChange={(v) => setForm((f) => ({ ...f, category: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="blog-category"><SelectValue /></SelectTrigger>
                   <SelectContent>{CATEGORY_OPTIONS.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label>Tags (comma separated)</Label>
-                <Input value={form.tags} onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))} placeholder="community, event" />
+                <Label htmlFor="blog-tags">Tags (comma separated)</Label>
+                <Input id="blog-tags" value={form.tags} onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))} placeholder="community, event" />
               </div>
             </div>
 
             <div className="space-y-1.5">
-              <Label>Cover image</Label>
+              <Label htmlFor="blog-cover">Cover image</Label>
               <div className="flex items-center gap-3">
                 <span className="grid h-16 w-24 shrink-0 place-items-center overflow-hidden rounded-lg bg-slate-100">
                   {coverPreview ? <img src={coverPreview} alt="" className="h-full w-full object-cover" /> : <ImageOff className="h-5 w-5 text-slate-400" />}
                 </span>
-                <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden"
+                <input id="blog-cover" ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden"
                   onChange={(e) => onCoverSelected(e.target.files?.[0] ?? null)} />
                 <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
                   <Upload className="mr-1 h-3.5 w-3.5" /> {coverPreview ? "Replace" : "Upload"}
@@ -332,9 +392,9 @@ export default function BlogManager() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label>Status</Label>
+                <Label htmlFor="blog-status">Status</Label>
                 <Select value={action} onValueChange={(v) => setAction(v as BlogSaveAction)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="blog-status"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="draft">Save as draft</SelectItem>
                     <SelectItem value="schedule">Schedule</SelectItem>
@@ -345,15 +405,15 @@ export default function BlogManager() {
               </div>
               {action === "schedule" && (
                 <div className="space-y-1.5">
-                  <Label>Publish at</Label>
-                  <Input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
+                  <Label htmlFor="blog-scheduled-at">Publish at</Label>
+                  <Input id="blog-scheduled-at" type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
                 </div>
               )}
             </div>
 
             <div className="space-y-1.5">
-              <Label className="flex items-center gap-1.5"><Eye className="h-3.5 w-3.5" /> Body</Label>
-              <Textarea rows={8} value={form.body} onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))}
+              <Label htmlFor="blog-body" className="flex items-center gap-1.5"><Eye className="h-3.5 w-3.5" /> Body</Label>
+              <Textarea id="blog-body" rows={8} value={form.body} onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))}
                 placeholder={"Write in plain text. Leave a blank line between paragraphs."} />
               <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Preview</p>

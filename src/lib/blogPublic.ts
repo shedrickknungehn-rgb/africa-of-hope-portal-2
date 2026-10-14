@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "../integrations/supabase/client.ts";
 
 /**
  * Shared blog contract — see /code/.plans/public-site-blog-backend-contract.md.
@@ -26,7 +26,7 @@ export interface BlogPost {
   updatedAt: string;
 }
 
-type Row = Record<string, unknown>;
+export type BlogRow = Record<string, unknown>;
 
 const txt = (v: unknown, fallback = ""): string => (v === null || v === undefined ? fallback : String(v));
 const orNull = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
@@ -35,7 +35,7 @@ const isBlogStatus = (v: unknown): v is BlogStatus =>
   v === "draft" || v === "scheduled" || v === "published" || v === "archived";
 
 /** Maps a `blog_posts` row (any caller — public or admin) onto the shared `BlogPost` shape. */
-export function mapBlogPostRow(r: Row): BlogPost {
+export function mapBlogRow(r: BlogRow): BlogPost {
   return {
     id: txt(r.id),
     slug: txt(r.slug),
@@ -56,39 +56,33 @@ export function mapBlogPostRow(r: Row): BlogPost {
   };
 }
 
-/**
- * True when the error is "the blog_posts table doesn't exist yet" (migration
- * not applied in this environment) rather than a real failure — public blog
- * views should degrade to an empty state instead of crashing.
- */
-function isMissingTable(message: string | undefined | null): boolean {
-  const m = message || "";
-  return /relation .*blog_posts.* does not exist|schema cache/i.test(m);
-}
-
 export interface ListPublishedPostsOptions {
   limit?: number;
-  category?: string;
 }
 
-/** Public, published-only reads. RLS already restricts visibility; we also order by published_at desc. */
+/**
+ * Public, published-only reads. RLS already restricts visibility for
+ * anonymous visitors, but we also filter explicitly here so a signed-in
+ * staff member (who bypasses RLS via the `blog.manage` policy) never sees
+ * drafts, archived posts, or posts scheduled for the future on the public
+ * site itself.
+ */
 export async function listPublishedPosts(options: ListPublishedPostsOptions = {}): Promise<BlogPost[]> {
-  const { limit, category } = options;
+  const { limit } = options;
   try {
     let query = supabase
       .from("blog_posts")
       .select("*")
+      .in("status", ["published", "scheduled"])
+      .lte("published_at", new Date().toISOString())
       .order("published_at", { ascending: false });
-    if (category && category !== "All") query = query.eq("category", category);
     if (limit) query = query.limit(limit);
     const { data, error } = await query;
-    if (error) {
-      if (isMissingTable(error.message)) return [];
-      throw new Error(error.message);
-    }
-    return (data ?? []).map(mapBlogPostRow);
+    if (error) throw new Error(error.message);
+    return (data ?? []).map(mapBlogRow);
   } catch {
-    // Network/table-not-ready errors should never break the public site.
+    // Network errors (or the table not existing yet in an environment
+    // where the migration hasn't run) should never break the public site.
     return [];
   }
 }
@@ -101,12 +95,11 @@ export async function getPublishedPost(slug: string): Promise<BlogPost | null> {
       .from("blog_posts")
       .select("*")
       .eq("slug", slug)
+      .in("status", ["published", "scheduled"])
+      .lte("published_at", new Date().toISOString())
       .maybeSingle();
-    if (error) {
-      if (isMissingTable(error.message)) return null;
-      throw new Error(error.message);
-    }
-    return data ? mapBlogPostRow(data) : null;
+    if (error) throw new Error(error.message);
+    return data ? mapBlogRow(data) : null;
   } catch {
     return null;
   }

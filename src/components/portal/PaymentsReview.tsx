@@ -20,18 +20,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState, Reveal, SectionHeader, StatCard, panelClass } from "../Navigation";
 import { cn } from "@/lib/utils";
+import { money } from "./paymentFormat";
+import PaymentStatusBadge from "./PaymentStatusBadge";
 
-function money(amount: number, currency: "USD" | "LRD") {
-  const symbol = currency === "USD" ? "$" : "L$";
-  return `${symbol}${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
-}
-
-const STATUS_TONE: Record<PaymentSubmissionStatus, string> = {
-  pending: "bg-amber-100 text-amber-800",
-  confirmed: "bg-emerald-100 text-emerald-800",
-  rejected: "bg-rose-100 text-rose-700",
-};
-const STATUS_ICON = { pending: Clock, confirmed: Check, rejected: X };
 const STATUS_FILTERS: Array<{ value: PaymentSubmissionStatus | "all"; label: string }> = [
   { value: "pending", label: "Pending" },
   { value: "confirmed", label: "Confirmed" },
@@ -40,13 +31,14 @@ const STATUS_FILTERS: Array<{ value: PaymentSubmissionStatus | "all"; label: str
 ];
 
 function SubmissionsTab() {
-  const { state } = useApp();
+  const { state, reloadKey } = useApp();
   const [submissions, setSubmissions] = useState<PaymentSubmission[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState<PaymentSubmissionStatus | "all">("pending");
   const [review, setReview] = useState<{ submission: PaymentSubmission; decision: "confirm" | "reject" } | null>(null);
   const [note, setNote] = useState("");
+  const [ledgerAmountUsd, setLedgerAmountUsd] = useState("");
   const [busy, setBusy] = useState(false);
 
   const studentName = (id: string) => state.users.find((u) => u.id === id)?.name ?? "Unknown student";
@@ -63,7 +55,7 @@ function SubmissionsTab() {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [reloadKey]);
 
   const visible = useMemo(() => {
     const rows = filter === "all" ? submissions : submissions.filter((s) => s.status === filter);
@@ -76,17 +68,31 @@ function SubmissionsTab() {
 
   const pendingCount = submissions.filter((s) => s.status === "pending").length;
 
+  // The fee ledger has no currency column — it only ever carries a USD
+  // amount — so confirming an LRD submission needs a USD amount to credit.
+  const needsLedgerAmount = review?.decision === "confirm" && review.submission.currency === "LRD";
+
   const openReview = (submission: PaymentSubmission, decision: "confirm" | "reject") => {
     setReview({ submission, decision });
     setNote("");
+    setLedgerAmountUsd("");
   };
 
   const submitReview = async () => {
     if (!review) return;
     if (review.decision === "reject" && !note.trim()) { toast.error("Add a note explaining the rejection."); return; }
+    if (needsLedgerAmount && !(Number(ledgerAmountUsd) > 0)) {
+      toast.error("Enter the USD amount to credit to the fee ledger.");
+      return;
+    }
     setBusy(true);
     try {
-      const result = await paymentsApi.review(review.submission.id, review.decision, note);
+      const result = await paymentsApi.review(
+        review.submission.id,
+        review.decision,
+        note,
+        needsLedgerAmount ? Number(ledgerAmountUsd) : undefined,
+      );
       toast.success(review.decision === "confirm" ? `Payment confirmed. Receipt ${result.receipt_number ?? ""}` : "Payment rejected.");
       setReview(null);
       await load();
@@ -123,14 +129,13 @@ function SubmissionsTab() {
       ) : (
         <div className="space-y-3">
           {visible.map((s) => {
-            const Icon = STATUS_ICON[s.status];
             return (
               <Reveal key={s.id} className={cn(panelClass, "p-4")}>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-semibold text-slate-900">{studentName(s.studentId)}</p>
-                      <Badge className={cn("flex items-center gap-1 capitalize", STATUS_TONE[s.status])}><Icon className="h-3 w-3" />{s.status}</Badge>
+                      <PaymentStatusBadge status={s.status} />
                     </div>
                     <p className="mt-1 text-sm font-medium text-emerald-800">{money(s.amount, s.currency)} · {s.category}</p>
                     <p className="mt-1 flex items-center gap-1 text-xs text-slate-500"><Phone className="h-3 w-3" /> {s.payerPhone} · {PAYMENT_PROVIDER_LABELS[s.provider]}</p>
@@ -173,9 +178,24 @@ function SubmissionsTab() {
               <p><span className="text-slate-400">Reference:</span> {review.submission.transactionReference}</p>
             </div>
           )}
+          {needsLedgerAmount && (
+            <div className="space-y-1.5">
+              <Label htmlFor="review-ledger-amount">USD amount credited to the fee ledger</Label>
+              <Input
+                id="review-ledger-amount"
+                type="number"
+                min="0"
+                step="0.01"
+                value={ledgerAmountUsd}
+                onChange={(e) => setLedgerAmountUsd(e.target.value)}
+                placeholder="e.g. 50.00"
+              />
+              <p className="text-xs text-slate-400">The fee ledger only tracks USD; enter the USD equivalent of this LRD payment.</p>
+            </div>
+          )}
           <div className="space-y-1.5">
-            <Label>Note {review?.decision === "reject" && "(required)"}</Label>
-            <Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder={review?.decision === "reject" ? "e.g. Reference does not match our records." : "Optional"} />
+            <Label htmlFor="review-note">Note {review?.decision === "reject" && "(required)"}</Label>
+            <Textarea id="review-note" rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder={review?.decision === "reject" ? "e.g. Reference does not match our records." : "Optional"} />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setReview(null)}>Cancel</Button>
@@ -194,6 +214,7 @@ const emptyChannelForm: PaymentChannelInput = {
 };
 
 function ChannelsTab() {
+  const { reloadKey } = useApp();
   const [channels, setChannels] = useState<PaymentChannel[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -212,7 +233,7 @@ function ChannelsTab() {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [reloadKey]);
 
   const startCreate = () => { setEditing(null); setForm(emptyChannelForm); setOpen(true); };
   const startEdit = (c: PaymentChannel) => {
@@ -301,9 +322,9 @@ function ChannelsTab() {
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <Label>Provider</Label>
+              <Label htmlFor="channel-provider">Provider</Label>
               <Select value={form.provider} onValueChange={(v) => setForm((f) => ({ ...f, provider: v as PaymentProvider }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="channel-provider"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="mtn_momo">MTN MoMo</SelectItem>
                   <SelectItem value="orange_money">Orange Money</SelectItem>
@@ -311,22 +332,22 @@ function ChannelsTab() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Label</Label>
-              <Input value={form.label} onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} placeholder="Main tuition account" />
+              <Label htmlFor="channel-label">Label</Label>
+              <Input id="channel-label" value={form.label} onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} placeholder="Main tuition account" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Account name</Label>
-                <Input value={form.accountName} onChange={(e) => setForm((f) => ({ ...f, accountName: e.target.value }))} />
+                <Label htmlFor="channel-account-name">Account name</Label>
+                <Input id="channel-account-name" value={form.accountName} onChange={(e) => setForm((f) => ({ ...f, accountName: e.target.value }))} />
               </div>
               <div className="space-y-1.5">
-                <Label>Account number</Label>
-                <Input value={form.accountNumber} onChange={(e) => setForm((f) => ({ ...f, accountNumber: e.target.value }))} />
+                <Label htmlFor="channel-account-number">Account number</Label>
+                <Input id="channel-account-number" value={form.accountNumber} onChange={(e) => setForm((f) => ({ ...f, accountNumber: e.target.value }))} />
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label>Instructions (optional)</Label>
-              <Textarea rows={2} value={form.instructions} onChange={(e) => setForm((f) => ({ ...f, instructions: e.target.value }))} placeholder="Use the student's full name as the payment reference." />
+              <Label htmlFor="channel-instructions">Instructions (optional)</Label>
+              <Textarea id="channel-instructions" rows={2} value={form.instructions} onChange={(e) => setForm((f) => ({ ...f, instructions: e.target.value }))} placeholder="Use the student's full name as the payment reference." />
             </div>
             <div className="flex items-center justify-between rounded-xl bg-slate-50 p-3">
               <p className="text-sm font-medium text-slate-800">Active</p>

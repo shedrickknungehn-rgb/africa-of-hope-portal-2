@@ -1,9 +1,11 @@
--- ROLLBACK-ONLY contract harness for the blog/payments/email-outbox migration.
+-- ROLLBACK-ONLY contract harness for the blog/payments/email-outbox
+-- migration and its payments/email hardening follow-up.
 --
 -- Run only with explicit authorization through psql as the database owner.
--- The migration and all fixtures run in one transaction; the final ROLLBACK
--- is mandatory. This script makes no COMMIT and does not call Storage HTTP
--- APIs, Resend, or create browser sessions -- it only exercises SQL/RPCs.
+-- The migrations and all fixtures run in one transaction; the final
+-- ROLLBACK is mandatory. This script makes no COMMIT and does not call
+-- Storage HTTP APIs, Resend, or create browser sessions -- it only
+-- exercises SQL/RPCs.
 --
 -- Usage once authorized (do not use `-1`, which would conflict with this BEGIN):
 --   DATABASE_URL="postgresql://..." psql "$DATABASE_URL" -X -f supabase/tests/blog_email_payments_contract.sql
@@ -44,10 +46,16 @@ $$;
 GRANT SELECT, INSERT, UPDATE ON pg_temp.test_results TO authenticated, anon;
 GRANT EXECUTE ON FUNCTION pg_temp.record_result(text, boolean, text) TO authenticated, anon;
 
-\echo Applying blog/payments/email migration first pass (inside transaction)
+\echo Applying blog/payments/email migration (040000) first pass
 \ir ../migrations/20261014040000_blog_email_payments.sql
-\echo Applying blog/payments/email migration idempotency pass (inside same transaction)
+\echo Applying blog/payments/email migration (040000) idempotency pass
 \ir ../migrations/20261014040000_blog_email_payments.sql
+\echo Applying backend hardening migration (050000)
+\ir ../migrations/20261014050000_backend_hardening.sql
+\echo Applying payments/email hardening migration (060000) first pass
+\ir ../migrations/20261014060000_payments_email_hardening.sql
+\echo Applying payments/email hardening migration (060000) idempotency pass
+\ir ../migrations/20261014060000_payments_email_hardening.sql
 
 -- Fixed, non-production identities. They exist only until the ROLLBACK below.
 INSERT INTO auth.users (
@@ -61,7 +69,8 @@ SELECT fixture.id, (SELECT instance_id FROM auth.users LIMIT 1),
 FROM (VALUES
   ('b1000000-0000-0000-0000-000000000001'::uuid, '__txn_blog_pay_test__student@testing.invalid', '__txn_blog_pay_test__ Student'),
   ('b1000000-0000-0000-0000-000000000002'::uuid, '__txn_blog_pay_test__reviewer@testing.invalid', '__txn_blog_pay_test__ Reviewer'),
-  ('b1000000-0000-0000-0000-000000000003'::uuid, '__txn_blog_pay_test__nonreviewer@testing.invalid', '__txn_blog_pay_test__ Non-reviewer')
+  ('b1000000-0000-0000-0000-000000000003'::uuid, '__txn_blog_pay_test__nonreviewer@testing.invalid', '__txn_blog_pay_test__ Non-reviewer'),
+  ('b1000000-0000-0000-0000-000000000004'::uuid, '__txn_blog_pay_test__admin@testing.invalid', '__txn_blog_pay_test__ Admin')
 ) AS fixture(id, email, full_name);
 
 UPDATE public.profiles
@@ -69,13 +78,15 @@ SET role = CASE id
   WHEN 'b1000000-0000-0000-0000-000000000001'::uuid THEN 'Student'
   WHEN 'b1000000-0000-0000-0000-000000000002'::uuid THEN 'Finance Officer'
   WHEN 'b1000000-0000-0000-0000-000000000003'::uuid THEN 'Teacher'
+  WHEN 'b1000000-0000-0000-0000-000000000004'::uuid THEN 'School Admin'
 END,
 status = 'Active',
 full_name = coalesce(full_name, '__txn_blog_pay_test__ fixture')
 WHERE id IN (
   'b1000000-0000-0000-0000-000000000001'::uuid,
   'b1000000-0000-0000-0000-000000000002'::uuid,
-  'b1000000-0000-0000-0000-000000000003'::uuid
+  'b1000000-0000-0000-0000-000000000003'::uuid,
+  'b1000000-0000-0000-0000-000000000004'::uuid
 );
 
 -- Blog fixtures: published (visible), scheduled-in-the-future (hidden until
@@ -97,11 +108,24 @@ SELECT pg_temp.record_result(
   AND to_regclass('public.payment_submissions') IS NOT NULL
   AND to_regclass('public.email_outbox') IS NOT NULL
   AND to_regprocedure('public.submit_payment(uuid,numeric,text,text,text,text,date,text)') IS NOT NULL
-  AND to_regprocedure('public.review_payment(uuid,text,text)') IS NOT NULL
+  AND to_regprocedure('public.review_payment(uuid,text,text,numeric)') IS NOT NULL
+  AND to_regprocedure('public.review_payment(uuid,text,text)') IS NULL
   AND to_regprocedure('public.enqueue_email(text,text,text,text,jsonb,uuid,text,timestamptz)') IS NOT NULL
   AND to_regprocedure('public.retry_failed_emails()') IS NOT NULL
-  AND EXISTS (SELECT 1 FROM storage.buckets WHERE id = 'blog-covers' AND public = true),
-  'tables, RPCs and bucket required by the contract'
+  AND EXISTS (SELECT 1 FROM storage.buckets WHERE id = 'blog-covers' AND public = true)
+  AND EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'payment_submissions' AND column_name = 'ledger_amount_usd'
+  )
+  AND EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename = 'payment_submissions'
+      AND indexname = 'payment_submissions_provider_reference_active_key'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'payment_submissions_provider_reference_key'
+  ),
+  'tables, RPCs, bucket, ledger column and partial unique index required by the contract'
 );
 
 -- ─────────────────────── Blog visibility (public/anon) ───────────────────
@@ -258,12 +282,15 @@ BEGIN
   PERFORM pg_temp.record_result('confirm: inserts a fee_transactions row', fee_rows = 1, 'rows=' || fee_rows);
   PERFORM pg_temp.record_result('confirm: notifies the student', notif_rows = 1, 'rows=' || notif_rows);
   PERFORM pg_temp.record_result('confirm: queues a payment_receipt email', receipt_email_rows = 1, 'rows=' || receipt_email_rows);
-  PERFORM pg_temp.record_result('confirm: queues at least one email_outbox row for the student', email_rows >= 1, 'rows=' || email_rows);
+  -- Exactly one, not merely "at least one": the notifications->email bridge
+  -- must skip 'payment_confirmed' (it already got the dedicated receipt
+  -- email above), or the student gets duplicate mail for one decision.
+  PERFORM pg_temp.record_result('confirm: queues exactly one email_outbox row for the student', email_rows = 1, 'rows=' || email_rows);
 EXCEPTION WHEN OTHERS THEN
   PERFORM pg_temp.record_result('confirm: inserts a fee_transactions row', false, SQLSTATE || ': ' || SQLERRM);
   PERFORM pg_temp.record_result('confirm: notifies the student', false, SQLSTATE || ': ' || SQLERRM);
   PERFORM pg_temp.record_result('confirm: queues a payment_receipt email', false, SQLSTATE || ': ' || SQLERRM);
-  PERFORM pg_temp.record_result('confirm: queues at least one email_outbox row for the student', false, SQLSTATE || ': ' || SQLERRM);
+  PERFORM pg_temp.record_result('confirm: queues exactly one email_outbox row for the student', false, SQLSTATE || ': ' || SQLERRM);
 END;
 $$;
 
@@ -318,11 +345,198 @@ END;
 $$;
 RESET ROLE;
 
+-- One email per decision, overall: this student's two reviewed submissions
+-- (one confirmed, one rejected) must have produced exactly two emails in
+-- total -- the dedicated payment_receipt and payment_rejected ones -- and
+-- no extra generic 'notification' template rows from the bridge trigger.
+DO $$
+DECLARE
+  total_email_rows integer;
+  generic_notification_rows integer;
+BEGIN
+  SELECT count(*) INTO total_email_rows FROM public.email_outbox
+  WHERE related_user_id = 'b1000000-0000-0000-0000-000000000001'::uuid;
+
+  SELECT count(*) INTO generic_notification_rows FROM public.email_outbox
+  WHERE related_user_id = 'b1000000-0000-0000-0000-000000000001'::uuid AND template = 'notification';
+
+  PERFORM pg_temp.record_result(
+    'email dedupe: exactly one email per payment decision',
+    total_email_rows = 2 AND generic_notification_rows = 0,
+    'total=' || total_email_rows || ' generic_notification=' || generic_notification_rows
+  );
+EXCEPTION WHEN OTHERS THEN
+  PERFORM pg_temp.record_result('email dedupe: exactly one email per payment decision', false, SQLSTATE || ': ' || SQLERRM);
+END;
+$$;
+
+-- ────────── Resubmission with the same reference is allowed once the ──────
+-- ────────── earlier submission using it was rejected ──────────────────────
+
+SELECT set_config('request.jwt.claim.role', 'authenticated', true);
+SELECT set_config('request.jwt.claim.sub', 'b1000000-0000-0000-0000-000000000001', true);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE submission_id uuid;
+BEGIN
+  SELECT public.submit_payment(
+    'b3000000-0000-0000-0000-000000000001'::uuid, 10.00, 'USD', 'Books',
+    '0880000001', '__txn-pay-0002', current_date, 'Resubmitted after rejection'
+  ) INTO submission_id;
+  PERFORM pg_temp.record_result('RPC: resubmission after rejection is allowed', submission_id IS NOT NULL, 'submission_id=' || submission_id);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM pg_temp.record_result('RPC: resubmission after rejection is allowed', false, SQLSTATE || ': ' || SQLERRM);
+END;
+$$;
+RESET ROLE;
+
+-- ───────── LRD confirmation: a USD ledger amount is required and used ────
+-- fee_transactions carries no currency column, so an LRD submission must
+-- have its USD-equivalent amount supplied by the reviewer at confirm time.
+
+SELECT set_config('request.jwt.claim.role', 'authenticated', true);
+SELECT set_config('request.jwt.claim.sub', 'b1000000-0000-0000-0000-000000000001', true);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE submission_id uuid;
+BEGIN
+  SELECT public.submit_payment(
+    'b3000000-0000-0000-0000-000000000001'::uuid, 20000.00, 'LRD', 'Tuition',
+    '0880000001', '__txn-pay-lrd-0001', current_date, 'LRD contract test payment'
+  ) INTO submission_id;
+  PERFORM pg_temp.record_result('RPC: student submits an LRD payment', submission_id IS NOT NULL, 'submission_id=' || submission_id);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM pg_temp.record_result('RPC: student submits an LRD payment', false, SQLSTATE || ': ' || SQLERRM);
+END;
+$$;
+RESET ROLE;
+
+SELECT set_config('request.jwt.claim.role', 'authenticated', true);
+SELECT set_config('request.jwt.claim.sub', 'b1000000-0000-0000-0000-000000000002', true);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE submission_id uuid;
+BEGIN
+  SELECT id INTO submission_id FROM public.payment_submissions WHERE transaction_reference = '__TXN-PAY-LRD-0001';
+  PERFORM public.review_payment(submission_id, 'confirm', 'Confirmed via contract test');
+  PERFORM pg_temp.record_result('RPC: LRD confirmation without a ledger amount is rejected', false, 'RPC unexpectedly succeeded');
+EXCEPTION WHEN OTHERS THEN
+  PERFORM pg_temp.record_result(
+    'RPC: LRD confirmation without a ledger amount is rejected', SQLERRM = 'ledger_amount_required', SQLSTATE || ': ' || SQLERRM
+  );
+END;
+$$;
+
+DO $$
+DECLARE
+  submission_id uuid;
+  result jsonb;
+BEGIN
+  SELECT id INTO submission_id FROM public.payment_submissions WHERE transaction_reference = '__TXN-PAY-LRD-0001';
+  SELECT public.review_payment(submission_id, 'confirm', 'Confirmed via contract test', 90.00) INTO result;
+  PERFORM pg_temp.record_result(
+    'RPC: reviewer confirms an LRD payment with a USD ledger amount',
+    result ->> 'status' = 'confirmed' AND nullif(result ->> 'receipt_number', '') IS NOT NULL,
+    result::text
+  );
+EXCEPTION WHEN OTHERS THEN
+  PERFORM pg_temp.record_result('RPC: reviewer confirms an LRD payment with a USD ledger amount', false, SQLSTATE || ': ' || SQLERRM);
+END;
+$$;
+RESET ROLE;
+SELECT set_config('request.jwt.claim.role', '', true);
+SELECT set_config('request.jwt.claim.sub', '', true);
+
+DO $$
+DECLARE
+  submission_id uuid;
+  fee_amount numeric;
+  fee_reference text;
+  ledger_amount numeric;
+BEGIN
+  SELECT id INTO submission_id FROM public.payment_submissions WHERE transaction_reference = '__TXN-PAY-LRD-0001';
+
+  SELECT amount, reference INTO fee_amount, fee_reference FROM public.fee_transactions
+  WHERE student_id = 'b1000000-0000-0000-0000-000000000001'::uuid AND reference LIKE '__TXN-PAY-LRD-0001%';
+
+  SELECT ledger_amount_usd INTO ledger_amount FROM public.payment_submissions WHERE id = submission_id;
+
+  PERFORM pg_temp.record_result(
+    'LRD confirm: fee_transactions amount is the USD ledger amount', fee_amount = 90.00, 'amount=' || fee_amount
+  );
+  PERFORM pg_temp.record_result(
+    'LRD confirm: fee_transactions reference mentions the original LRD amount',
+    fee_reference = '__TXN-PAY-LRD-0001 (LRD 20000.00)', 'reference=' || fee_reference
+  );
+  PERFORM pg_temp.record_result(
+    'LRD confirm: payment_submissions.ledger_amount_usd is set', ledger_amount = 90.00, 'ledger_amount_usd=' || ledger_amount
+  );
+EXCEPTION WHEN OTHERS THEN
+  PERFORM pg_temp.record_result('LRD confirm: fee_transactions amount is the USD ledger amount', false, SQLSTATE || ': ' || SQLERRM);
+  PERFORM pg_temp.record_result('LRD confirm: fee_transactions reference mentions the original LRD amount', false, SQLSTATE || ': ' || SQLERRM);
+  PERFORM pg_temp.record_result('LRD confirm: payment_submissions.ledger_amount_usd is set', false, SQLSTATE || ': ' || SQLERRM);
+END;
+$$;
+
+-- ───────────── Stale `sending` emails are reclaimed by retry_failed_emails ─
+
+DO $$
+DECLARE
+  stale_email_id uuid;
+BEGIN
+  SELECT id INTO stale_email_id FROM public.email_outbox
+  WHERE related_user_id = 'b1000000-0000-0000-0000-000000000001'::uuid AND template = 'payment_receipt'
+  LIMIT 1;
+
+  -- email_outbox_touch (BEFORE UPDATE) always rewrites updated_at to now(),
+  -- so it must be disabled briefly to fabricate a stale "sending" fixture row.
+  ALTER TABLE public.email_outbox DISABLE TRIGGER email_outbox_touch;
+  UPDATE public.email_outbox
+    SET status = 'sending', updated_at = now() - interval '20 minutes'
+    WHERE id = stale_email_id;
+  ALTER TABLE public.email_outbox ENABLE TRIGGER email_outbox_touch;
+END;
+$$;
+
+SELECT set_config('request.jwt.claim.role', 'authenticated', true);
+SELECT set_config('request.jwt.claim.sub', 'b1000000-0000-0000-0000-000000000004', true);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE
+  reclaimed_count int;
+BEGIN
+  SELECT public.retry_failed_emails() INTO reclaimed_count;
+  PERFORM pg_temp.record_result('retry_failed_emails: reclaims a stale sending row', reclaimed_count >= 1, 'reclaimed_count=' || reclaimed_count);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM pg_temp.record_result('retry_failed_emails: reclaims a stale sending row', false, SQLSTATE || ': ' || SQLERRM);
+END;
+$$;
+RESET ROLE;
+SELECT set_config('request.jwt.claim.role', '', true);
+SELECT set_config('request.jwt.claim.sub', '', true);
+
+DO $$
+DECLARE
+  stale_status text;
+BEGIN
+  SELECT status INTO stale_status FROM public.email_outbox
+  WHERE related_user_id = 'b1000000-0000-0000-0000-000000000001'::uuid AND template = 'payment_receipt'
+  LIMIT 1;
+  PERFORM pg_temp.record_result('retry_failed_emails: stale row is back to queued', stale_status = 'queued', 'status=' || stale_status);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM pg_temp.record_result('retry_failed_emails: stale row is back to queued', false, SQLSTATE || ': ' || SQLERRM);
+END;
+$$;
+
 -- Surface all assertion outcomes before rollback. This SELECT does not persist.
 SELECT name, passed, detail FROM pg_temp.test_results ORDER BY name;
 SELECT count(*) AS failed_contracts FROM pg_temp.test_results WHERE NOT passed;
-SELECT CASE WHEN count(*) = 16 AND bool_and(passed) THEN 'true' ELSE 'false' END AS contracts_passed
-FROM pg_temp.test_results
+SELECT CASE WHEN count(*) = 25 AND bool_and(passed) THEN 'true' ELSE 'false' END AS contracts_passed
+FROM pg_temp.test_results;
 \gset
 
 -- Mandatory final statement: all migration DDL, fixture auth accounts,
