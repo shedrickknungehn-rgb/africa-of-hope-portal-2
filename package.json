@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "PORT=3000 vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
+    "test": "node --test tests/academicApi.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "preview": "vite preview --host 0.0.0.0",
