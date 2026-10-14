@@ -276,6 +276,13 @@
   .group\/marquee:hover .marquee-pause-on-hover {
     animation-play-state: paused;
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    .marquee-horizontal,
+    .marquee-vertical {
+      animation: none;
+    }
+  }
 }
 
 /* ===== container/animated-border-trail ===== */

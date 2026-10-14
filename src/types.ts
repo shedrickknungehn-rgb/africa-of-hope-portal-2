@@ -117,6 +117,11 @@ export interface Announcement {
   category: AnnouncementCategory;
   date: string;
   author: string;
+  status?: "draft" | "scheduled" | "published";
+  audience?: "public" | "all" | "students" | "teachers";
+  scheduledAt?: string | null;
+  expiresAt?: string | null;
+  publishedAt?: string | null;
 }
 
 export interface HeroSlide {
