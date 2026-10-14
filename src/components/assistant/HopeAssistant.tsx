@@ -94,12 +94,12 @@ export default function HopeAssistant() {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="fixed bottom-5 right-5 z-40 flex items-center gap-2.5 rounded-full bg-[#022c22] px-5 py-3.5 text-sm font-bold text-white shadow-2xl shadow-emerald-950/30 transition hover:brightness-110"
+          className="fixed bottom-5 right-5 z-40 flex items-center gap-2.5 rounded-full bg-[#022c22] px-5 py-3.5 text-sm font-bold text-white shadow-2xl shadow-emerald-950/30 transition hover:brightness-110 max-sm:top-24 max-sm:right-3 max-sm:bottom-auto max-sm:h-10 max-sm:w-10 max-sm:justify-center max-sm:p-0"
         >
-          <span className="grid h-9 w-9 place-items-center rounded-full bg-amber-400 text-[#022c22]">
+          <span className="grid h-9 w-9 place-items-center rounded-full bg-amber-400 text-[#022c22] max-sm:h-7 max-sm:w-7">
             <Sparkles className="h-4.5 w-4.5" />
           </span>
-          {label}
+          <span className="max-sm:sr-only">{label}</span>
         </button>
       )}
 

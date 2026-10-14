@@ -1,6 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 
-export type ApprovalStatus = "draft" | "pending" | "approved" | "rejected" | "revision_requested";
+export type ApprovalStatus = "draft" | "pending" | "submitted" | "approved" | "rejected" | "revision_requested";
 
 export interface ScheduleSlot {
   day_of_week: number;
@@ -26,6 +26,7 @@ export interface CourseEnrollment {
   progress_percent: number;
   completion_status: string;
   workload_warnings: string[];
+  revision_note?: string | null;
   cohort?: { id: string; name: string; start_date: string; end_date: string; room: string; program_id: string };
 }
 
@@ -111,11 +112,25 @@ export interface ApprovalItem {
   context: Record<string, unknown>;
 }
 
-function explain(error: { message: string } | null): string | null {
+function explain(error: { message: string; details?: string | null } | null): string | null {
   if (!error) return null;
   if (/does not exist|schema cache|could not find/i.test(error.message)) {
     return "Academic planning is not active yet. Apply the latest Supabase migration, then refresh this page.";
   }
+  if (error.message === "enrollment_not_allowed" && error.details) {
+    try {
+      const detail = JSON.parse(error.details) as { conflicts?: string[]; warnings?: string[] };
+      return [...(detail.conflicts ?? []), ...(detail.warnings ?? [])].join(" ") || "This course cannot be added to your plan.";
+    } catch { return "This course cannot be added to your plan."; }
+  }
+  const friendly: Record<string, string> = {
+    class_session_schedule_conflict: "This class overlaps another approved session for the teacher or cohort.",
+    invalid_lesson_assessment_settings: "Check the lesson position, time limits, and grade weights.",
+    approved_learning_unit_requires_published_quiz: "Publish the linked quiz in Quiz Builder before lesson approval.",
+    decision_note_required: "Add a decision note for a rejection or revision request.",
+    active_student_required: "Only an approved active student can submit a course plan.",
+  };
+  if (friendly[error.message]) return friendly[error.message];
   return error.message;
 }
 
@@ -194,52 +209,40 @@ export const academicApi = {
     if (message) throw new Error(message);
     return data as ClassSession;
   },
-  async createUnit(payload: Omit<LearningUnit, "id" | "status">) {
-    const { data, error } = await supabase.from("learning_units").insert({ ...payload, status: "draft" }).select().single();
-    const message = explain(error);
-    if (message) throw new Error(message);
-    return data as LearningUnit;
-  },
   async createUnitWithAssessments(
     payload: Omit<LearningUnit, "id" | "status" | "quiz_id" | "classwork_assignment_id">,
     assessment: { classworkTitle: string; dueDate: string; maxMarks: number; classworkMinutes: number; classworkWeight: number; quizMinutes: number; quizWeight: number },
   ) {
-    const unit = await this.createUnit({ ...payload, quiz_id: null, classwork_assignment_id: null });
-    const { data: assignment, error: assignmentError } = await supabase.from("assignments").insert({
-      cohort_id: payload.cohort_id,
-      title: assessment.classworkTitle,
-      description: `Classwork for ${payload.title}`,
-      due_date: assessment.dueDate,
-      max_marks: assessment.maxMarks,
-      learning_unit_id: unit.id,
-      time_limit_minutes: assessment.classworkMinutes,
-      grade_weight: assessment.classworkWeight,
-    }).select("id").single();
-    const assignmentMessage = explain(assignmentError);
-    if (assignmentMessage) throw new Error(assignmentMessage);
-    const { data: quiz, error: quizError } = await supabase.from("quizzes").insert({
-      program_id: payload.program_id,
-      cohort_id: payload.cohort_id,
-      title: `${payload.title} quiz`,
-      description: `Timed quiz for ${payload.title}. Add questions in the Quiz Builder before publication.`,
-      status: "draft",
-      time_limit_minutes: assessment.quizMinutes,
-      max_attempts: 1,
-      pass_mark: 50,
-      learning_unit_id: unit.id,
-      grade_weight: assessment.quizWeight,
-    }).select("id").single();
-    const quizMessage = explain(quizError);
-    if (quizMessage) throw new Error(quizMessage);
-    const { data, error } = await supabase.from("learning_units").update({
-      quiz_id: quiz.id,
-      classwork_assignment_id: assignment.id,
-    }).eq("id", unit.id).select().single();
+    const { data, error } = await supabase.rpc("create_academic_lesson_bundle", {
+      p_program_id: payload.program_id,
+      p_cohort_id: payload.cohort_id,
+      p_course_plan_id: payload.course_plan_id,
+      p_title: payload.title,
+      p_summary: payload.summary,
+      p_unit_type: payload.unit_type,
+      p_position: payload.position,
+      p_due_at: payload.due_at,
+      p_classwork_minutes: assessment.classworkMinutes,
+      p_classwork_weight: assessment.classworkWeight,
+      p_quiz_minutes: assessment.quizMinutes,
+      p_quiz_weight: assessment.quizWeight,
+    });
     const message = explain(error);
     if (message) throw new Error(message);
     return data as LearningUnit;
   },
   async uploadMaterial(file: File, cohortId: string, teacherId: string): Promise<{ path: string; mime: string }> {
+    if (file.size > 25 * 1024 * 1024) throw new Error("Training materials must be 25 MB or smaller.");
+    const supported = new Set([
+      "application/pdf", "text/plain", "application/zip", "application/x-zip-compressed",
+      "image/jpeg", "image/png", "image/webp", "image/gif", "image/svg+xml", "image/heic",
+      "video/mp4", "video/webm", "video/quicktime", "audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4", "audio/x-m4a",
+      "application/msword", "application/vnd.ms-powerpoint", "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ]);
+    if (!supported.has(file.type)) throw new Error("This file format is not supported. Use PDF, Office, image, audio, video, text, or ZIP files.");
     const safe = file.name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 100);
     const path = `${cohortId}/${teacherId}/${Date.now()}-${safe}`;
     const { error } = await supabase.storage.from("training-materials").upload(path, file, {
@@ -249,14 +252,30 @@ export const academicApi = {
     if (error) throw new Error(explain(error) ?? error.message);
     return { path, mime: file.type || "application/octet-stream" };
   },
+  async deleteMaterialUpload(path: string) {
+    const { error } = await supabase.storage.from("training-materials").remove([path]);
+    if (error) throw new Error(explain(error) ?? error.message);
+  },
   async createMaterial(payload: Omit<TrainingMaterial, "id" | "status" | "revision_note" | "created_at">) {
-    const { data, error } = await supabase.from("training_materials").insert({ ...payload, status: "pending" }).select().single();
+    const { data, error } = await supabase.from("training_materials").insert({ ...payload, status: "submitted", submitted_at: new Date().toISOString() }).select().single();
     const message = explain(error);
     if (message) throw new Error(message);
     return data as TrainingMaterial;
   },
-  async submit(entityType: "course_plan" | "class_session" | "learning_unit", entityId: string) {
+  async submit(entityType: "course_plan" | "class_session" | "learning_unit" | "training_material", entityId: string) {
     const { data, error } = await supabase.rpc("submit_academic_item", { p_entity_type: entityType, p_entity_id: entityId });
+    const message = explain(error);
+    if (message) throw new Error(message);
+    return data;
+  },
+  async revise(entityType: "course_plan" | "class_session" | "learning_unit" | "training_material", entityId: string, changes: Record<string, unknown>) {
+    const table = {
+      course_plan: "teacher_course_plans",
+      class_session: "class_sessions",
+      learning_unit: "learning_units",
+      training_material: "training_materials",
+    }[entityType];
+    const { data, error } = await supabase.from(table).update(changes).eq("id", entityId).in("status", ["draft", "revision_requested"]).select().single();
     const message = explain(error);
     if (message) throw new Error(message);
     return data;

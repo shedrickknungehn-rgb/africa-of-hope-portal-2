@@ -19,6 +19,7 @@ insert into public.role_permissions (role, permission) values
   ('School Admin', 'academic_plans.approve'),
   ('School Admin', 'materials.approve'),
   ('Registrar', 'academic_plans.approve'),
+  ('Registrar', 'materials.approve'),
   ('Teacher', 'lessons.manage'),
   ('Teacher', 'academic_plans.manage'),
   ('Teacher', 'materials.manage'),
@@ -44,6 +45,19 @@ alter table public.cohort_students
   add column if not exists active boolean not null default true,
   add column if not exists completed_at timestamptz;
 
+create or replace function public.is_cohort_member(c uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  select exists (
+    select 1 from public.cohort_students
+    where cohort_id = c and student_id = auth.uid() and active
+  );
+$fn$;
+
 alter table public.attendance
   add column if not exists class_session_id uuid;
 
@@ -57,10 +71,11 @@ alter table public.quizzes
   add column if not exists grade_weight numeric not null default 0;
 
 alter table public.announcements
-  add column if not exists audience text not null default 'public',
+  add column if not exists audience text not null default 'all',
   add column if not exists status text not null default 'published',
   add column if not exists scheduled_at timestamptz,
-  add column if not exists expires_at timestamptz;
+  add column if not exists expires_at timestamptz,
+  add column if not exists published_at timestamptz;
 
 do $$
 begin
@@ -278,10 +293,10 @@ begin
     alter table public.quizzes add constraint quizzes_learning_unit_fkey foreign key (learning_unit_id) references public.learning_units(id) on delete set null;
   end if;
   if not exists (select 1 from pg_constraint where conname = 'learning_units_quiz_fkey' and conrelid = 'public.learning_units'::regclass) then
-    alter table public.learning_units add constraint learning_units_quiz_fkey foreign key (quiz_id) references public.quizzes(id) on delete restrict;
+    alter table public.learning_units add constraint learning_units_quiz_fkey foreign key (quiz_id) references public.quizzes(id) on delete set null;
   end if;
   if not exists (select 1 from pg_constraint where conname = 'learning_units_classwork_assignment_fkey' and conrelid = 'public.learning_units'::regclass) then
-    alter table public.learning_units add constraint learning_units_classwork_assignment_fkey foreign key (classwork_assignment_id) references public.assignments(id) on delete restrict;
+    alter table public.learning_units add constraint learning_units_classwork_assignment_fkey foreign key (classwork_assignment_id) references public.assignments(id) on delete set null;
   end if;
   if not exists (select 1 from pg_constraint where conname = 'learning_units_course_plan_fkey' and conrelid = 'public.learning_units'::regclass) then
     alter table public.learning_units add constraint learning_units_course_plan_fkey foreign key (course_plan_id) references public.teacher_course_plans(id) on delete set null;
@@ -356,20 +371,60 @@ as $fn$
     from public.announcements a
     left join public.profiles p on p.id = auth.uid()
     where a.id = p_announcement_id
-      and a.status = 'published'
+      and a.status in ('published', 'scheduled')
       and coalesce(a.scheduled_at, a.published_date::timestamptz, now()) <= now()
       and (a.expires_at is null or a.expires_at > now())
       and (
-        a.audience in ('public', 'all')
+        a.audience = 'public'
+        or (a.audience = 'all' and p.id is not null)
         or (a.audience = 'students' and p.id is not null and p.role = 'Student')
         or (a.audience = 'teachers' and p.id is not null and p.role = 'Teacher')
       )
   );
 $fn$;
 
+-- Linked quizzes become visible only with their approved lesson and only to
+-- active members of that lesson's cohort. Standalone quizzes keep the existing
+-- program/cohort visibility behavior.
+create or replace function public.quiz_visible_to_me(q uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  select exists (
+    select 1 from public.quizzes qz
+    where qz.id = q
+      and qz.status = 'published'
+      and (
+        (qz.learning_unit_id is not null and exists (
+          select 1
+          from public.learning_units u
+          join public.cohort_students cs on cs.cohort_id = u.cohort_id
+          where u.id = qz.learning_unit_id and u.status = 'approved'
+            and cs.student_id = auth.uid() and cs.active
+        ))
+        or (qz.learning_unit_id is null and qz.cohort_id is not null and exists (
+          select 1 from public.cohort_students cs
+          where cs.cohort_id = qz.cohort_id and cs.student_id = auth.uid() and cs.active
+        ))
+        or (qz.learning_unit_id is null and qz.program_id is not null and exists (
+          select 1 from public.profiles p where p.id = auth.uid() and qz.program_id = any(p.program_ids)
+        ))
+        or (qz.learning_unit_id is null and qz.program_id is not null and exists (
+          select 1 from public.cohort_students cs
+          join public.cohorts c on c.id = cs.cohort_id
+          where cs.student_id = auth.uid() and cs.active and c.program_id = qz.program_id
+        ))
+      )
+  );
+$fn$;
+
 -- Returns current conflict and workload warnings without making a change. It is
 -- intentionally internal; the public preview RPC below calls it for auth.uid().
-create or replace function public._course_enrollment_preview(p_student_id uuid, p_cohort_id uuid)
+drop function if exists public._course_enrollment_preview(uuid, uuid);
+create or replace function public._course_enrollment_preview(p_student_id uuid, p_cohort_id uuid, p_check_window boolean default true)
 returns jsonb
 language plpgsql
 security definer
@@ -400,13 +455,15 @@ begin
   from public.cohort_students cs
   where cs.student_id = p_student_id and cs.active;
 
-  if c.enrollment_status <> 'open' then
+  if c.enrollment_status = 'cancelled' then
+    warnings := warnings || jsonb_build_array(jsonb_build_object('code', 'course_cancelled', 'blocking', true, 'message', 'This course offering was cancelled.'));
+  elsif p_check_window and c.enrollment_status <> 'open' then
     warnings := warnings || jsonb_build_array(jsonb_build_object('code', 'enrollment_closed', 'blocking', true, 'message', 'This course offering is not open for enrolment.'));
   end if;
-  if c.enrollment_opens_at is not null and c.enrollment_opens_at > now() then
+  if p_check_window and c.enrollment_opens_at is not null and c.enrollment_opens_at > now() then
     warnings := warnings || jsonb_build_array(jsonb_build_object('code', 'enrollment_not_open', 'blocking', true, 'message', 'Enrolment has not opened yet.'));
   end if;
-  if c.enrollment_closes_at is not null and c.enrollment_closes_at <= now() then
+  if p_check_window and c.enrollment_closes_at is not null and c.enrollment_closes_at <= now() then
     warnings := warnings || jsonb_build_array(jsonb_build_object('code', 'enrollment_closed', 'blocking', true, 'message', 'The enrolment deadline has passed.'));
   end if;
   if c.capacity is not null and roster_count >= c.capacity then
@@ -476,7 +533,10 @@ declare
   result jsonb;
 begin
   can_view := p_student_id = auth.uid()
-    or public.is_cohort_teacher(p_cohort_id)
+    or (public.is_cohort_teacher(p_cohort_id) and exists (
+      select 1 from public.cohort_students
+      where cohort_id = p_cohort_id and student_id = p_student_id and active
+    ))
     or public.has_permission('academic_plans.approve')
     or public.has_permission('assignments.manage');
   if not can_view then
@@ -581,6 +641,7 @@ declare
   quiz_cohort uuid;
   quiz_program uuid;
   quiz_weight numeric;
+  quiz_status text;
 begin
   if new.status <> 'approved' then
     return new;
@@ -600,7 +661,7 @@ begin
 
   select cohort_id, grade_weight into assignment_cohort, assignment_weight
   from public.assignments where id = new.classwork_assignment_id;
-  select id, cohort_id, program_id, grade_weight into quiz_found, quiz_cohort, quiz_program, quiz_weight
+  select id, cohort_id, program_id, grade_weight, status into quiz_found, quiz_cohort, quiz_program, quiz_weight, quiz_status
   from public.quizzes where id = new.quiz_id;
 
   if assignment_cohort is null or quiz_found is null then
@@ -608,6 +669,9 @@ begin
   end if;
   if assignment_weight <= 0 or quiz_weight <= 0 then
     raise exception 'approved_learning_unit_components_require_grade_weight' using errcode = 'P0001';
+  end if;
+  if quiz_status <> 'published' then
+    raise exception 'approved_learning_unit_requires_published_quiz' using errcode = 'P0001';
   end if;
   if assignment_cohort <> new.cohort_id then
     raise exception 'learning_unit_assignment_cohort_mismatch' using errcode = 'P0001';
@@ -720,7 +784,9 @@ begin
   if new.status = 'approved' and (tg_op = 'INSERT' or old.status is distinct from 'approved') then
     insert into public.cohort_students (cohort_id, student_id, enrolled_at, enrollment_source, active)
     values (new.cohort_id, new.student_id, now(), 'course_enrollment', true)
-    on conflict do nothing;
+    on conflict (cohort_id, student_id) do update
+      set active = true, enrolled_at = excluded.enrolled_at,
+          enrollment_source = excluded.enrollment_source, completed_at = null;
   end if;
   return new;
 end;
@@ -752,10 +818,10 @@ begin
       ));
   elsif new.status in ('approved', 'rejected', 'revision_requested') then
     recipient := case entity_kind
-      when 'enrollment' then new.student_id
-      when 'course_plan' then new.teacher_id
-      when 'class_session' then new.teacher_id
-      else new.created_by
+      when 'enrollment' then nullif(to_jsonb(new) ->> 'student_id', '')::uuid
+      when 'course_plan' then nullif(to_jsonb(new) ->> 'teacher_id', '')::uuid
+      when 'class_session' then nullif(to_jsonb(new) ->> 'teacher_id', '')::uuid
+      else nullif(to_jsonb(new) ->> 'created_by', '')::uuid
     end;
     if recipient is not null then
       insert into public.notifications (recipient_id, kind, title, body, entity_type, entity_id)
@@ -857,14 +923,23 @@ begin
     raise exception 'active_student_required' using errcode = 'P0001';
   end if;
 
-  perform pg_advisory_xact_lock(hashtext(auth.uid()::text || ':' || p_cohort_id::text)::bigint);
-  preview := public._course_enrollment_preview(auth.uid(), p_cohort_id);
+  perform pg_advisory_xact_lock(hashtext('student:' || auth.uid()::text)::bigint);
 
   select * into enrollment from public.course_enrollments
   where cohort_id = p_cohort_id and student_id = auth.uid() for update;
 
   if enrollment.id is not null and enrollment.status = 'approved' then
-    return preview || jsonb_build_object('enrollment_id', enrollment.id, 'status', enrollment.status, 'already_approved', true);
+    return jsonb_build_object('allowed', true, 'conflicts', '[]'::jsonb, 'warnings', '[]'::jsonb,
+      'weekly_hours', coalesce((enrollment.workload ->> 'weekly_hours')::numeric, 0),
+      'enrollment_id', enrollment.id, 'status', enrollment.status, 'already_approved', true);
+  end if;
+  if enrollment.id is not null and enrollment.status not in ('draft', 'rejected', 'revision_requested') then
+    raise exception 'enrollment_not_submittable' using errcode = 'P0001';
+  end if;
+
+  preview := public._course_enrollment_preview(auth.uid(), p_cohort_id);
+  if not (preview ->> 'allowed')::boolean then
+    raise exception 'enrollment_not_allowed' using errcode = 'P0001', detail = preview::text;
   end if;
 
   if enrollment.id is null then
@@ -922,6 +997,87 @@ begin
 end;
 $fn$;
 
+create or replace function public.create_academic_lesson_bundle(
+  p_program_id uuid,
+  p_cohort_id uuid,
+  p_course_plan_id uuid,
+  p_title text,
+  p_summary text,
+  p_unit_type text,
+  p_position integer,
+  p_due_at timestamptz,
+  p_classwork_minutes integer,
+  p_classwork_weight numeric,
+  p_quiz_minutes integer,
+  p_quiz_weight numeric
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  unit public.learning_units%rowtype;
+  v_assignment_id uuid;
+  v_quiz_id uuid;
+begin
+  if auth.uid() is null
+     or not public.has_permission('lessons.manage')
+     or not public.is_cohort_teacher(p_cohort_id) then
+    raise exception 'forbidden' using errcode = 'P0001';
+  end if;
+  if not exists (select 1 from public.cohorts where id = p_cohort_id and program_id = p_program_id) then
+    raise exception 'cohort_program_mismatch' using errcode = 'P0001';
+  end if;
+  if p_course_plan_id is not null and not exists (
+    select 1 from public.teacher_course_plans
+    where id = p_course_plan_id and cohort_id = p_cohort_id and teacher_id = auth.uid()
+  ) then
+    raise exception 'course_plan_scope_mismatch' using errcode = 'P0001';
+  end if;
+  if p_unit_type not in ('chapter', 'module', 'topic')
+     or p_position < 1
+     or p_classwork_minutes not between 1 and 1440
+     or p_quiz_minutes not between 1 and 600
+     or p_classwork_weight <= 0 or p_classwork_weight > 100
+     or p_quiz_weight <= 0 or p_quiz_weight > 100 then
+    raise exception 'invalid_lesson_assessment_settings' using errcode = 'P0001';
+  end if;
+
+  insert into public.learning_units (
+    program_id, cohort_id, course_plan_id, title, summary, unit_type,
+    position, due_at, status, created_by
+  ) values (
+    p_program_id, p_cohort_id, p_course_plan_id, btrim(p_title), coalesce(p_summary, ''), p_unit_type,
+    p_position, p_due_at, 'draft', auth.uid()
+  ) returning * into unit;
+
+  insert into public.assignments (
+    cohort_id, title, description, due_date, max_marks, learning_unit_id,
+    time_limit_minutes, grade_weight
+  ) values (
+    p_cohort_id, btrim(p_title) || ' classwork', 'Classwork for ' || btrim(p_title),
+    p_due_at::date, 100, unit.id, p_classwork_minutes, p_classwork_weight
+  ) returning id into v_assignment_id;
+
+  insert into public.quizzes (
+    program_id, cohort_id, created_by, title, description, status,
+    time_limit_minutes, max_attempts, pass_mark, learning_unit_id, grade_weight
+  ) values (
+    p_program_id, p_cohort_id, auth.uid(), btrim(p_title) || ' quiz',
+    'Timed quiz for ' || btrim(p_title) || '. Add questions in Quiz Builder before publication.',
+    'draft', p_quiz_minutes, 1, 50, unit.id, p_quiz_weight
+  ) returning id into v_quiz_id;
+
+  update public.learning_units
+  set quiz_id = v_quiz_id, classwork_assignment_id = v_assignment_id
+  where id = unit.id
+  returning * into unit;
+
+  return to_jsonb(unit);
+end;
+$fn$;
+
 create or replace function public.review_academic_submission(
   p_entity_type text,
   p_entity_id uuid,
@@ -954,13 +1110,18 @@ begin
   end if;
 
   if p_entity_type = 'enrollment' then
+    select student_id into enrollment.student_id from public.course_enrollments where id = p_entity_id;
+    if enrollment.student_id is null then raise exception 'not_found' using errcode = 'P0002'; end if;
+    -- Match the submit path's lock order to avoid a row/advisory deadlock.
+    perform pg_advisory_xact_lock(hashtext('student:' || enrollment.student_id::text)::bigint);
     select * into enrollment from public.course_enrollments where id = p_entity_id for update;
     if enrollment.id is null then raise exception 'not_found' using errcode = 'P0002'; end if;
     if enrollment.status <> 'submitted' then raise exception 'submission_not_pending_review' using errcode = 'P0001'; end if;
 
-    -- Serialise approvals for this cohort so capacity cannot be overbooked.
+    -- Serialise approvals for both the student and cohort so capacity and
+    -- cross-course timetable checks cannot race.
     perform 1 from public.cohorts where id = enrollment.cohort_id for update;
-    preview := public._course_enrollment_preview(enrollment.student_id, enrollment.cohort_id);
+    preview := public._course_enrollment_preview(enrollment.student_id, enrollment.cohort_id, false);
     if p_decision = 'approved' and not (preview ->> 'allowed')::boolean then
       raise exception 'enrollment_conflict_detected' using errcode = 'P0001', detail = preview::text;
     end if;
@@ -970,7 +1131,7 @@ begin
           workload = jsonb_build_object('active_course_count', preview -> 'active_course_count', 'weekly_hours', preview -> 'weekly_hours'),
           conflict_warnings = preview -> 'conflicts', workload_warnings = preview -> 'warnings', reviewed_at = now(),
           approved_at = case when p_decision = 'approved' then now() else null end,
-          reviewed_by = auth.uid(), revision_note = nullif(btrim(coalesce(p_note, '')), '')
+          reviewed_by = auth.uid(), revision_note = btrim(coalesce(p_note, ''))
       where id = enrollment.id
       returning * into enrollment;
     return jsonb_build_object('entity_type', p_entity_type, 'entity_id', enrollment.id, 'status', enrollment.status, 'conflicts', enrollment.conflict_warnings, 'warnings', enrollment.workload_warnings);
@@ -980,6 +1141,9 @@ begin
       where id = p_entity_id and status = 'submitted'
       returning jsonb_build_object('entity_type', p_entity_type, 'entity_id', id, 'status', status) into result;
   elsif p_entity_type = 'class_session' then
+    perform pg_advisory_xact_lock(hashtext('teacher:' || teacher_id::text)::bigint),
+           pg_advisory_xact_lock(hashtext('cohort:' || cohort_id::text)::bigint)
+    from public.class_sessions where id = p_entity_id;
     update public.class_sessions set status = p_decision, reviewed_at = now(), reviewed_by = auth.uid(),
       approved_at = case when p_decision = 'approved' then now() else null end, revision_note = nullif(btrim(coalesce(p_note, '')), '')
       where id = p_entity_id and status = 'submitted'
@@ -999,37 +1163,47 @@ begin
 end;
 $fn$;
 
-revoke all on function public._course_enrollment_preview(uuid, uuid) from public, anon, authenticated;
+revoke all on function public._course_enrollment_preview(uuid, uuid, boolean) from public, anon, authenticated;
 revoke all on function public.course_grade_summary(uuid, uuid) from public, anon;
 grant execute on function public.course_grade_summary(uuid, uuid) to authenticated;
 revoke all on function public.preview_course_enrollment(uuid) from public, anon;
 revoke all on function public.submit_course_enrollment(uuid) from public, anon;
 revoke all on function public.submit_academic_item(text, uuid) from public, anon;
+revoke all on function public.create_academic_lesson_bundle(uuid, uuid, uuid, text, text, text, integer, timestamptz, integer, numeric, integer, numeric) from public, anon;
 revoke all on function public.review_academic_submission(text, uuid, text, text) from public, anon;
 grant execute on function public.preview_course_enrollment(uuid) to authenticated;
 grant execute on function public.submit_course_enrollment(uuid) to authenticated;
 grant execute on function public.submit_academic_item(text, uuid) to authenticated;
+grant execute on function public.create_academic_lesson_bundle(uuid, uuid, uuid, text, text, text, integer, timestamptz, integer, numeric, integer, numeric) to authenticated;
 grant execute on function public.review_academic_submission(text, uuid, text, text) to authenticated;
 
-create or replace view public.academic_approval_queue
+drop view if exists public.academic_approval_queue;
+create view public.academic_approval_queue
 with (security_invoker = true)
 as
-  select 'enrollment'::text as entity_type, e.id as entity_id, c.name as title, e.student_id as submitted_by,
-    e.submitted_at, e.created_at, e.status, e.revision_note
+  select 'enrollment'::text as entity_type, e.id as entity_id, c.name as title,
+    coalesce(p.name, p.full_name, p.email, 'Student') as owner_name,
+    coalesce(e.submitted_at, e.created_at) as submitted_at, e.status, e.revision_note,
+    to_jsonb(e) || jsonb_build_object('cohort_name', c.name, 'student_name', coalesce(p.name, p.full_name, p.email)) as context
   from public.course_enrollments e join public.cohorts c on c.id = e.cohort_id
+  left join public.profiles p on p.id = e.student_id
   where e.status = 'submitted'
   union all
-  select 'course_plan', p.id, p.title, p.teacher_id, p.submitted_at, p.created_at, p.status, p.revision_note
-  from public.teacher_course_plans p where p.status = 'submitted'
+  select 'course_plan', cp.id, cp.title, coalesce(p.name, p.full_name, p.email, 'Teacher'),
+    coalesce(cp.submitted_at, cp.created_at), cp.status, cp.revision_note, to_jsonb(cp)
+  from public.teacher_course_plans cp left join public.profiles p on p.id = cp.teacher_id where cp.status = 'submitted'
   union all
-  select 'class_session', s.id, s.title, s.teacher_id, s.submitted_at, s.created_at, s.status, s.revision_note
-  from public.class_sessions s where s.status = 'submitted'
+  select 'class_session', s.id, s.title, coalesce(p.name, p.full_name, p.email, 'Teacher'),
+    coalesce(s.submitted_at, s.created_at), s.status, s.revision_note, to_jsonb(s)
+  from public.class_sessions s left join public.profiles p on p.id = s.teacher_id where s.status = 'submitted'
   union all
-  select 'learning_unit', u.id, u.title, u.created_by, u.submitted_at, u.created_at, u.status, u.revision_note
-  from public.learning_units u where u.status = 'submitted'
+  select 'learning_unit', u.id, u.title, coalesce(p.name, p.full_name, p.email, 'Teacher'),
+    coalesce(u.submitted_at, u.created_at), u.status, u.revision_note, to_jsonb(u)
+  from public.learning_units u left join public.profiles p on p.id = u.created_by where u.status = 'submitted'
   union all
-  select 'training_material', m.id, m.title, m.created_by, m.submitted_at, m.created_at, m.status, m.revision_note
-  from public.training_materials m where m.status = 'submitted';
+  select 'training_material', m.id, m.title, coalesce(p.name, p.full_name, p.email, 'Teacher'),
+    coalesce(m.submitted_at, m.created_at), m.status, m.revision_note, to_jsonb(m)
+  from public.training_materials m left join public.profiles p on p.id = m.created_by where m.status = 'submitted';
 
 revoke all on public.academic_approval_queue from public, anon;
 grant select on public.academic_approval_queue to authenticated;
@@ -1045,6 +1219,68 @@ alter table public.student_learning_progress enable row level security;
 alter table public.course_completions enable row level security;
 alter table public.approval_events enable row level security;
 alter table public.notifications enable row level security;
+
+-- Linked classwork stays hidden and immutable until its lesson is approved.
+drop policy if exists assignments_read on public.assignments;
+drop policy if exists assignments_write on public.assignments;
+create policy assignments_read on public.assignments for select to authenticated using (
+  ((learning_unit_id is null or exists (
+      select 1 from public.learning_units u where u.id = assignments.learning_unit_id and u.status = 'approved'
+    )) and public.is_cohort_member(cohort_id))
+  or public.is_cohort_teacher(cohort_id)
+  or public.has_permission('assignments.manage')
+  or public.has_permission('people.view')
+);
+create policy assignments_write on public.assignments for all to authenticated
+  using (
+    (learning_unit_id is null or not exists (
+      select 1 from public.learning_units u where u.id = assignments.learning_unit_id and u.status = 'approved'
+    )) and (
+      public.has_permission('assignments.manage')
+      or (public.has_permission('assignments.own') and public.is_cohort_teacher(cohort_id))
+    )
+  )
+  with check (
+    public.has_permission('assignments.manage')
+    or (public.has_permission('assignments.own') and public.is_cohort_teacher(cohort_id))
+  );
+
+-- An approved lesson freezes its reviewed quiz and questions. Teachers can
+-- continue editing standalone quizzes and quizzes for unapproved lessons.
+drop policy if exists quizzes_update on public.quizzes;
+drop policy if exists quizzes_delete on public.quizzes;
+drop policy if exists quiz_questions_all on public.quiz_questions;
+create policy quizzes_update on public.quizzes for update to authenticated
+  using (
+    public.can_manage_quiz(id)
+    and (learning_unit_id is null or not exists (
+      select 1 from public.learning_units u where u.id = quizzes.learning_unit_id and u.status = 'approved'
+    ))
+  )
+  with check (public.can_manage_quiz_scope(program_id, cohort_id));
+create policy quizzes_delete on public.quizzes for delete to authenticated using (
+  public.can_manage_quiz(id)
+  and (learning_unit_id is null or not exists (
+    select 1 from public.learning_units u where u.id = quizzes.learning_unit_id and u.status = 'approved'
+  ))
+);
+create policy quiz_questions_all on public.quiz_questions for all to authenticated
+  using (
+    public.can_manage_quiz(quiz_id)
+    and not exists (
+      select 1 from public.quizzes q
+      join public.learning_units u on u.id = q.learning_unit_id
+      where q.id = quiz_questions.quiz_id and u.status = 'approved'
+    )
+  )
+  with check (
+    public.can_manage_quiz(quiz_id)
+    and not exists (
+      select 1 from public.quizzes q
+      join public.learning_units u on u.id = q.learning_unit_id
+      where q.id = quiz_questions.quiz_id and u.status = 'approved'
+    )
+  );
 
 revoke all on public.course_enrollments from anon, authenticated;
 revoke all on public.learning_units, public.teacher_course_plans, public.class_sessions, public.training_materials,
@@ -1085,7 +1321,7 @@ create policy learning_units_read on public.learning_units for select to authent
   or public.is_academic_reviewer()
 );
 create policy learning_units_write on public.learning_units for all to authenticated
-  using (public.can_manage_learning_unit(id) or public.is_academic_reviewer())
+  using (status <> 'approved' and (public.can_manage_learning_unit(id) or public.is_academic_reviewer()))
   with check (
     (public.is_academic_reviewer() and status in ('draft', 'submitted', 'rejected', 'revision_requested'))
     or (public.has_permission('lessons.manage') and cohort_id is not null and public.is_cohort_teacher(cohort_id) and status in ('draft', 'submitted', 'rejected', 'revision_requested'))
@@ -1095,7 +1331,7 @@ create policy teacher_course_plans_read on public.teacher_course_plans for selec
   teacher_id = auth.uid() or public.is_academic_reviewer()
 );
 create policy teacher_course_plans_write on public.teacher_course_plans for all to authenticated
-  using (teacher_id = auth.uid() or public.is_academic_reviewer())
+  using (status <> 'approved' and (teacher_id = auth.uid() or public.is_academic_reviewer()))
   with check (
     (public.is_academic_reviewer() and status in ('draft', 'submitted', 'rejected', 'revision_requested'))
     or (teacher_id = auth.uid() and public.can_manage_cohort_plan(cohort_id) and status in ('draft', 'submitted', 'rejected', 'revision_requested'))
@@ -1105,7 +1341,7 @@ create policy class_sessions_read on public.class_sessions for select to authent
   (status = 'approved' and public.is_cohort_member(cohort_id)) or public.is_cohort_teacher(cohort_id) or public.is_academic_reviewer()
 );
 create policy class_sessions_write on public.class_sessions for all to authenticated
-  using (public.can_manage_cohort_plan(cohort_id))
+  using (status <> 'approved' and public.can_manage_cohort_plan(cohort_id))
   with check (
     (public.is_academic_reviewer() and status in ('draft', 'submitted', 'rejected', 'revision_requested', 'cancelled', 'completed'))
     or (public.can_manage_cohort_plan(cohort_id) and status in ('draft', 'submitted', 'rejected', 'revision_requested', 'cancelled', 'completed'))
@@ -1118,7 +1354,7 @@ create policy training_materials_read on public.training_materials for select to
   or public.has_permission('materials.approve')
 );
 create policy training_materials_write on public.training_materials for all to authenticated
-  using (created_by = auth.uid() or (public.has_permission('materials.manage') and cohort_id is not null and public.is_cohort_teacher(cohort_id)) or public.has_permission('materials.approve'))
+  using (status <> 'approved' and (created_by = auth.uid() or (public.has_permission('materials.manage') and cohort_id is not null and public.is_cohort_teacher(cohort_id)) or public.has_permission('materials.approve')))
   with check ((public.has_permission('materials.manage') and cohort_id is not null and public.is_cohort_teacher(cohort_id) and status in ('draft', 'submitted', 'rejected', 'revision_requested')) or public.has_permission('materials.approve'));
 
 create policy student_learning_progress_read on public.student_learning_progress for select to authenticated using (
@@ -1174,9 +1410,14 @@ create policy announcements_read on public.announcements for select using (publi
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (
   'training-materials', 'training-materials', false, 26214400,
-  array['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'audio/mpeg',
+  array['application/pdf', 'text/plain', 'application/zip', 'application/x-zip-compressed',
+        'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml', 'image/heic',
+        'video/mp4', 'video/webm', 'video/quicktime',
+        'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'audio/x-m4a',
+        'application/msword', 'application/vnd.ms-powerpoint', 'application/vnd.ms-excel',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'application/vnd.openxmlformats-officedocument.presentationml.presentation']
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
 )
 on conflict (id) do update set
   public = false,
@@ -1212,9 +1453,28 @@ create policy training_materials_private_read on storage.objects for select to a
 );
 
 drop policy if exists training_materials_private_write on storage.objects;
-create policy training_materials_private_write on storage.objects for all to authenticated
-  using (bucket_id = 'training-materials' and public.can_manage_training_material_folder((storage.foldername(name))[1]))
+drop policy if exists training_materials_private_insert on storage.objects;
+drop policy if exists training_materials_private_update on storage.objects;
+drop policy if exists training_materials_private_delete on storage.objects;
+create policy training_materials_private_insert on storage.objects for insert to authenticated
   with check (bucket_id = 'training-materials' and public.can_manage_training_material_folder((storage.foldername(name))[1]));
+create policy training_materials_private_update on storage.objects for update to authenticated
+  using (
+    bucket_id = 'training-materials'
+    and public.can_manage_training_material_folder((storage.foldername(name))[1])
+    and (public.has_permission('materials.approve') or not exists (
+      select 1 from public.training_materials m where m.file_path = name and m.status = 'approved'
+    ))
+  )
+  with check (bucket_id = 'training-materials' and public.can_manage_training_material_folder((storage.foldername(name))[1]));
+create policy training_materials_private_delete on storage.objects for delete to authenticated
+  using (
+    bucket_id = 'training-materials'
+    and public.can_manage_training_material_folder((storage.foldername(name))[1])
+    and (public.has_permission('materials.approve') or not exists (
+      select 1 from public.training_materials m where m.file_path = name and m.status = 'approved'
+    ))
+  );
 
 -- Realtime is opt-in and idempotent for user-facing updates.
 do $$

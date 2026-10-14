@@ -61,7 +61,7 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
   const visibleSections = w.home.order.filter((key) => !w.home.hidden.includes(key));
   const announcements = state.announcements
     .filter((announcement) => {
-      const isPublic = !announcement.audience || announcement.audience === "public" || announcement.audience === "all";
+      const isPublic = announcement.audience === "public";
       const isVisibleStatus = !announcement.status || announcement.status === "published" || (
         announcement.status === "scheduled"
         && !!announcement.scheduledAt
@@ -85,7 +85,7 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
 
   return (
     <div id="top" className="min-h-[100dvh] scroll-smooth bg-[#f6f8f7] text-slate-900">
-      {(announcements.length > 0 || w.announcementEnabled) && bannerItems.length > 0 && (
+      {w.announcementEnabled && bannerItems.length > 0 && (
         <div className="overflow-hidden bg-amber-400 text-emerald-950" role="region" aria-label="Announcements">
           <div className="sr-only" aria-live="polite">
             {bannerItems.join(". ")}
