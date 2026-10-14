@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState, Reveal, SectionHeader, panelClass } from "./Navigation";
+import { isAnnouncementLiveFor } from "@/lib/announcements";
 import { cn } from "@/lib/utils";
 
 const categories: AnnouncementCategory[] = ["Urgent", "Academic", "Financial"];
@@ -31,14 +32,7 @@ export default function AnnouncementManager() {
   const visible = useMemo(() => state.announcements.filter((item) => {
     if (filter !== "All" && item.category !== filter) return false;
     if (canManage) return true;
-    const audience = item.audience ?? "all";
-    if (audience === "students" && currentUser?.role !== "Student") return false;
-    if (audience === "teachers" && currentUser?.role !== "Teacher") return false;
-    const now = Date.now();
-    if (item.status === "draft") return false;
-    if (item.scheduledAt && new Date(item.scheduledAt).getTime() > now) return false;
-    if (item.expiresAt && new Date(item.expiresAt).getTime() <= now) return false;
-    return true;
+    return isAnnouncementLiveFor(item, currentUser?.role, Date.now());
   }), [state.announcements, filter, canManage, currentUser?.role]);
 
   const startCreate = () => { setEditing(null); setForm(empty); setOpen(true); };

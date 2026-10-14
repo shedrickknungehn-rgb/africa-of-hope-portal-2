@@ -106,7 +106,19 @@ test("maps the complete lesson bundle payload to the atomic RPC", async () => {
     p_program_id: "program-1", p_cohort_id: "cohort-1", p_course_plan_id: "plan-1", p_title: "Safety",
     p_summary: "Coverage", p_unit_type: "topic", p_position: 2, p_due_at: "2026-10-20T23:59:00.000Z",
     p_classwork_minutes: 30, p_classwork_weight: 40, p_quiz_minutes: 15, p_quiz_weight: 60,
+    p_available_from: null,
   }]);
+});
+
+test("forwards a non-null available_from on the lesson bundle RPC", async () => {
+  const { client, calls } = mockClient({ rpcResponse: { data: { id: "unit-2" }, error: null } });
+  const api = createAcademicApi(client);
+  await api.createUnitWithAssessments({
+    program_id: "program-1", cohort_id: "cohort-1", course_plan_id: "plan-1", title: "Safety",
+    summary: "Coverage", unit_type: "topic", position: 2, available_from: "2026-10-18T00:00:00.000Z", due_at: "2026-10-20T23:59:00.000Z",
+  }, { classworkMinutes: 30, classworkWeight: 40, quizMinutes: 15, quizWeight: 60 });
+  const rpcCall = calls.find(([name]) => name === "rpc") as [string, string, Record<string, unknown>] | undefined;
+  assert.equal(rpcCall?.[2].p_available_from, "2026-10-18T00:00:00.000Z");
 });
 
 test("submits and reviews through exact RPC argument names", async () => {
@@ -191,24 +203,19 @@ test("translates the new learning path and classwork error codes", () => {
   assert.equal(explainAcademicError({ message: "unit_not_available" }), "This lesson isn't available yet. Check back once it opens.");
   assert.equal(explainAcademicError({ message: "classwork_already_submitted" }), "You already submitted this classwork.");
   assert.equal(explainAcademicError({ message: "classwork_empty" }), "Add a response or attach a file before you submit.");
+  assert.equal(explainAcademicError({ message: "available_after_due" }), "\"Available from\" must be before the lesson's due date.");
 });
 
-test("starts and submits classwork through exact RPC argument names", async () => {
+test("starts and submits classwork through exact RPC argument names, with and without an attachment", async () => {
   const { client, calls } = mockClient({ rpcResponse: { data: { submission_id: "sub-1", status: "In Progress" }, error: null } });
   const api = createAcademicApi(client);
   await api.startClasswork("assignment-1");
   await api.submitClasswork("assignment-1", "My answer", "assignment-1/student-1/1-answer.pdf");
+  await api.submitClasswork("assignment-1", "My answer", null);
   assert.deepEqual(calls.filter(([name]) => name === "rpc"), [
     ["rpc", "start_classwork", { p_assignment_id: "assignment-1" }],
     ["rpc", "submit_classwork", { p_assignment_id: "assignment-1", p_response_text: "My answer", p_attachment_path: "assignment-1/student-1/1-answer.pdf" }],
-  ]);
-});
-
-test("submits classwork with a null attachment when no file is attached", async () => {
-  const { client, calls } = mockClient({ rpcResponse: { data: { submission_id: "sub-1" }, error: null } });
-  await createAcademicApi(client).submitClasswork("assignment-1", "My answer", null);
-  assert.deepEqual(calls.find(([name]) => name === "rpc"), [
-    "rpc", "submit_classwork", { p_assignment_id: "assignment-1", p_response_text: "My answer", p_attachment_path: null },
+    ["rpc", "submit_classwork", { p_assignment_id: "assignment-1", p_response_text: "My answer", p_attachment_path: null }],
   ]);
 });
 

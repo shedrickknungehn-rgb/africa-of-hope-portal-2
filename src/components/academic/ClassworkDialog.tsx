@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Clock, Loader2, Send } from "lucide-react";
-import { academicApi, type ClassworkStart } from "@/lib/academics";
+import { AlertTriangle, Clock, Loader2, Send, Timer } from "lucide-react";
+import { academicApi, TRAINING_MATERIAL_ACCEPT, type ClassworkStart } from "@/lib/academics";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,47 +18,74 @@ function formatCountdown(ms: number): string {
     : `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+function draftKey(assignmentId: string): string {
+  return `classwork-draft-${assignmentId}`;
+}
+
+function readDraft(assignmentId: string): string {
+  try { return sessionStorage.getItem(draftKey(assignmentId)) ?? ""; } catch { return ""; }
+}
+
 /**
- * G2: timed classwork. Opening the dialog calls `start_classwork` (idempotent
- * — resumes an in-progress attempt instead of restarting the clock), shows a
- * live countdown from `deadline_at`, accepts a text response and/or one
- * attachment, and submits through `submit_classwork`. The server is the
- * source of truth for lateness and the time limit; the countdown here is a
- * courtesy indicator, not an enforcement mechanism.
+ * G2: timed classwork. The dialog always mounts closed on a confirmation
+ * step ("Start timer") so starting the clock is a deliberate choice; it
+ * only skips straight to the live view when resuming a submission that is
+ * already "In Progress" server-side. Once started, `start_classwork` is
+ * idempotent — resuming never restarts the clock. The live countdown
+ * corrects for client clock skew on a fresh start (using the offset between
+ * the server's `started_at` and the moment the response arrived); on resume
+ * it simply uses the server's `deadline_at` against the client clock,
+ * which is the common case anyway. The server remains the source of truth
+ * for lateness and the time limit — the countdown is a courtesy, not an
+ * enforcement mechanism. The response text is saved to sessionStorage keyed
+ * by assignment id so a refresh or accidental close doesn't lose a draft.
  */
 export default function ClassworkDialog({
-  open,
   onOpenChange,
   assignmentId,
   studentId,
   unitTitle,
+  resuming,
+  timeLimitMinutes,
   onSubmitted,
 }: {
-  open: boolean;
   onOpenChange: (open: boolean) => void;
   assignmentId: string;
   studentId: string;
   unitTitle: string;
+  resuming: boolean;
+  timeLimitMinutes: number | null;
   onSubmitted: () => void;
 }) {
+  const [confirmed, setConfirmed] = useState(resuming);
   const [starting, setStarting] = useState(false);
   const [start, setStart] = useState<ClassworkStart | null>(null);
+  const [clockOffsetMs, setClockOffsetMs] = useState(0);
   const [error, setError] = useState("");
-  const [responseText, setResponseText] = useState("");
+  const [responseText, setResponseText] = useState(() => readDraft(assignmentId));
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const fileInputId = useRef(`classwork-file-${Math.random().toString(36).slice(2)}`).current;
+  const [announcement, setAnnouncement] = useState("");
+  const announcedRef = useRef(new Set<string>());
+  const responseId = useId();
+  const fileInputId = useId();
 
   useEffect(() => {
-    if (!open) { setStart(null); setError(""); setResponseText(""); setFile(null); return; }
+    if (!confirmed) return;
     let active = true;
+    const receivedAt = Date.now();
     setStarting(true);
     setError("");
     (async () => {
       try {
         const result = await academicApi.startClasswork(assignmentId);
-        if (active) setStart(result);
+        if (!active) return;
+        setStart(result);
+        if (!resuming) {
+          const serverStarted = new Date(result.started_at).getTime();
+          if (Number.isFinite(serverStarted)) setClockOffsetMs(serverStarted - receivedAt);
+        }
       } catch (err) {
         if (active) setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -66,17 +93,32 @@ export default function ClassworkDialog({
       }
     })();
     return () => { active = false; };
-  }, [open, assignmentId]);
+  }, [confirmed, assignmentId, resuming]);
 
   useEffect(() => {
-    if (!open || !start?.deadline_at) return;
+    if (!start?.deadline_at) return;
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, [open, start?.deadline_at]);
+  }, [start?.deadline_at]);
+
+  useEffect(() => {
+    try {
+      if (responseText) sessionStorage.setItem(draftKey(assignmentId), responseText);
+      else sessionStorage.removeItem(draftKey(assignmentId));
+    } catch { /* sessionStorage may be unavailable (private mode, quota) */ }
+  }, [assignmentId, responseText]);
 
   const deadlineMs = start?.deadline_at ? new Date(start.deadline_at).getTime() : null;
-  const msLeft = deadlineMs !== null ? deadlineMs - nowMs : null;
+  const correctedNow = nowMs + clockOffsetMs;
+  const msLeft = deadlineMs !== null ? deadlineMs - correctedNow : null;
   const timeUp = msLeft !== null && msLeft <= 0;
+
+  useEffect(() => {
+    if (msLeft === null) return;
+    if (msLeft <= 0 && !announcedRef.current.has("done")) { announcedRef.current.add("done"); setAnnouncement("Time is up."); }
+    else if (msLeft <= 60_000 && !announcedRef.current.has("1min")) { announcedRef.current.add("1min"); setAnnouncement("1 minute remaining."); }
+    else if (msLeft <= 300_000 && !announcedRef.current.has("5min")) { announcedRef.current.add("5min"); setAnnouncement("5 minutes remaining."); }
+  }, [msLeft]);
 
   const submit = async () => {
     if (!responseText.trim() && !file) {
@@ -87,8 +129,8 @@ export default function ClassworkDialog({
     try {
       const uploaded = file ? await academicApi.uploadClassworkAttachment(assignmentId, studentId, file) : null;
       const result = await academicApi.submitClasswork(assignmentId, responseText.trim(), uploaded?.path ?? null);
+      try { sessionStorage.removeItem(draftKey(assignmentId)); } catch { /* ignore */ }
       toast.success(result.is_late ? "Classwork submitted — marked late." : "Classwork submitted.");
-      onOpenChange(false);
       onSubmitted();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
@@ -98,31 +140,44 @@ export default function ClassworkDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{unitTitle}</DialogTitle>
           <DialogDescription>
-            {start?.time_limit_minutes ? `You have ${start.time_limit_minutes} minutes once you start. Submit before the clock runs out to avoid a late mark.` : "Write your response and submit when ready."}
+            {confirmed
+              ? start?.time_limit_minutes
+                ? `You have ${start.time_limit_minutes} minutes once you start. Submit before the clock runs out to avoid a late mark.`
+                : "Write your response and submit when ready."
+              : "Starting begins your timer — you can't pause it once it's running."}
           </DialogDescription>
         </DialogHeader>
-        {starting && <Loader2 className="mx-auto h-6 w-6 animate-spin text-emerald-700" aria-label="Starting classwork" />}
-        {!starting && error && (
+
+        {!confirmed && (
+          <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <Timer className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>{timeLimitMinutes ? `This classwork is timed: you'll have ${timeLimitMinutes} minutes to respond once you start.` : "This classwork is timed once you start."} Make sure you're ready before you begin.</p>
+          </div>
+        )}
+
+        {confirmed && starting && <Loader2 className="mx-auto h-6 w-6 animate-spin text-emerald-700" aria-label="Starting classwork" />}
+        {confirmed && !starting && error && (
           <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
           </div>
         )}
-        {!starting && !error && start && (
+        {confirmed && !starting && !error && start && (
           <div className="space-y-3">
             {msLeft !== null && (
-              <p className={`flex items-center gap-1.5 text-sm font-semibold ${timeUp ? "text-rose-600" : "text-amber-700"}`} role="timer" aria-live="polite">
+              <p aria-live="off" role="timer" className={`flex items-center gap-1.5 text-sm font-semibold ${timeUp ? "text-rose-600" : "text-amber-700"}`}>
                 <Clock className="h-4 w-4" /> {timeUp ? "Time is up — submit now" : `Time remaining: ${formatCountdown(msLeft)}`}
               </p>
             )}
+            <div className="sr-only" aria-live="polite">{announcement}</div>
             <div>
-              <Label htmlFor="classwork-response">Your response</Label>
+              <Label htmlFor={responseId}>Your response</Label>
               <Textarea
-                id="classwork-response"
+                id={responseId}
                 className="mt-1"
                 rows={6}
                 maxLength={20000}
@@ -133,15 +188,21 @@ export default function ClassworkDialog({
             </div>
             <div>
               <Label htmlFor={fileInputId}>Attach a file (optional)</Label>
-              <Input id={fileInputId} className="mt-1" type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+              <Input id={fileInputId} className="mt-1" type="file" accept={TRAINING_MATERIAL_ACCEPT} onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
             </div>
           </div>
         )}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button disabled={!start || submitting} onClick={() => void submit()} className="bg-emerald-700 hover:bg-emerald-800">
-            {submitting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Send className="mr-1 h-4 w-4" />} Submit classwork
-          </Button>
+          {confirmed ? (
+            <Button disabled={!start || submitting} onClick={() => void submit()} className="bg-emerald-700 hover:bg-emerald-800">
+              {submitting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Send className="mr-1 h-4 w-4" />} Submit classwork
+            </Button>
+          ) : (
+            <Button onClick={() => setConfirmed(true)} className="bg-emerald-700 hover:bg-emerald-800">
+              <Timer className="mr-1 h-4 w-4" /> Start timer
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

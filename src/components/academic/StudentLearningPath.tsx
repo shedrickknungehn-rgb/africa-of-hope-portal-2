@@ -12,8 +12,8 @@ import {
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { academicApi, type LearningUnit, type StudentProgressRow, type TrainingMaterial } from "@/lib/academics";
-import { fetchMyQuizAttempts } from "@/lib/quizzes";
-import type { QuizAttemptSummary } from "@/types";
+import { fetchMyQuizAttempts, fetchVisibleQuizzes, groupAttemptsByQuiz, summarizeAttempts } from "@/lib/quizzes";
+import type { Quiz, QuizAttemptSummary } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, SetupError, panelClass } from "../Navigation";
@@ -27,6 +27,14 @@ const unitTypeLabel: Record<LearningUnit["unit_type"], string> = { chapter: "Cha
 
 type Chip = { label: string; className: string };
 
+/** A unit's derived state, computed once from its own fields plus the student's progress rows and the current time. */
+function unitState(unit: LearningUnit, progressByUnit: Map<string, StudentProgressRow>, now: number) {
+  const completed = progressByUnit.get(unit.id)?.status === "completed";
+  const locked = !!unit.available_from && new Date(unit.available_from).getTime() > now;
+  const overdue = !completed && !!unit.due_at && new Date(unit.due_at).getTime() < now;
+  return { completed, locked, overdue };
+}
+
 function unitChip(unit: LearningUnit, completed: boolean, locked: boolean, overdue: boolean, isNext: boolean): Chip {
   if (completed) return { label: "Completed", className: "bg-emerald-100 text-emerald-800" };
   if (locked) return { label: `Locked until ${new Date(unit.available_from as string).toLocaleDateString()}`, className: "bg-slate-100 text-slate-700" };
@@ -38,45 +46,53 @@ function unitChip(unit: LearningUnit, completed: boolean, locked: boolean, overd
 /**
  * G1/G2/G7: the student's learning path — lessons grouped by course and
  * ordered by position, with sequencing (locked / up next / overdue /
- * completed), in-app material preview, a timed classwork flow and the
- * existing QuizPlayer for in-lesson quizzes.
+ * completed), in-app material preview, a timed classwork flow (confirm,
+ * start, submit) and the existing QuizPlayer for in-lesson quizzes (itself
+ * respecting attempt limits and open/close windows).
  */
-export default function StudentLearningPath({ reloadKey, onProgressChanged }: { reloadKey: number; onProgressChanged: () => void }) {
+export default function StudentLearningPath({
+  reloadKey,
+  units,
+  materials,
+}: {
+  reloadKey: number;
+  units: LearningUnit[];
+  materials: TrainingMaterial[];
+}) {
   const { state, currentUser, refresh } = useApp();
-  const [units, setUnits] = useState<LearningUnit[]>([]);
-  const [materials, setMaterials] = useState<TrainingMaterial[]>([]);
+  const userId = currentUser?.id;
+  const cohortKey = currentUser?.cohortIds.join(",") ?? "";
   const [progress, setProgress] = useState<StudentProgressRow[]>([]);
   const [attempts, setAttempts] = useState<QuizAttemptSummary[]>([]);
+  const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [firstLoadDone, setFirstLoadDone] = useState(false);
   const [busyUnit, setBusyUnit] = useState("");
   const [preview, setPreview] = useState<TrainingMaterial | null>(null);
-  const [classwork, setClasswork] = useState<{ unit: LearningUnit; assignmentId: string } | null>(null);
+  const [classwork, setClasswork] = useState<{ unit: LearningUnit; assignmentId: string; resuming: boolean } | null>(null);
   const [playingQuiz, setPlayingQuiz] = useState<string | null>(null);
   const [reviewingAttempt, setReviewingAttempt] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!currentUser) return;
+    if (!userId) return;
     setLoading(true); setError("");
     try {
-      const [unitRows, materialRows, progressRows, attemptRows] = await Promise.all([
-        academicApi.units(currentUser.programIds, currentUser.cohortIds),
-        academicApi.materials(currentUser.programIds, currentUser.cohortIds),
-        academicApi.myProgress(currentUser.cohortIds),
+      const [progressRows, attemptRows, quizRows] = await Promise.all([
+        academicApi.myProgress(currentUser?.cohortIds),
         fetchMyQuizAttempts(),
+        fetchVisibleQuizzes(),
       ]);
-      setUnits(unitRows); setMaterials(materialRows); setProgress(progressRows); setAttempts(attemptRows);
+      setProgress(progressRows); setAttempts(attemptRows); setQuizzes(quizRows);
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
-    finally { setLoading(false); }
-  }, [currentUser]);
+    finally { setLoading(false); setFirstLoadDone(true); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, cohortKey]);
   useEffect(() => { void load(); }, [load, reloadKey]);
 
   const progressByUnit = useMemo(() => new Map(progress.map((row) => [row.learning_unit_id, row])), [progress]);
-  const attemptsByQuiz = useMemo(() => {
-    const map = new Map<string, QuizAttemptSummary[]>();
-    for (const a of attempts) { const list = map.get(a.quizId) ?? []; list.push(a); map.set(a.quizId, list); }
-    return map;
-  }, [attempts]);
+  const attemptsByQuiz = useMemo(() => groupAttemptsByQuiz(attempts), [attempts]);
+  const quizzesById = useMemo(() => new Map(quizzes.map((q) => [q.id, q])), [quizzes]);
 
   const groups = useMemo(() => {
     const map = new Map<string, LearningUnit[]>();
@@ -95,8 +111,7 @@ export default function StudentLearningPath({ reloadKey, onProgressChanged }: { 
     const now = Date.now();
     for (const list of groups.values()) {
       for (const unit of list) {
-        const completed = progressByUnit.get(unit.id)?.status === "completed";
-        const locked = !!unit.available_from && new Date(unit.available_from).getTime() > now;
+        const { completed, locked } = unitState(unit, progressByUnit, now);
         if (!completed && !locked) { next.add(unit.id); break; }
       }
     }
@@ -109,12 +124,9 @@ export default function StudentLearningPath({ reloadKey, onProgressChanged }: { 
       await academicApi.recordProgress(unit.id, "completed");
       toast.success(`"${unit.title}" marked complete.`);
       await load();
-      onProgressChanged();
     } catch (err) { toast.error(err instanceof Error ? err.message : String(err)); }
     finally { setBusyUnit(""); }
   };
-
-  const openMaterial = (material: TrainingMaterial) => setPreview(material);
 
   const classworkSubmission = (assignmentId: string) =>
     state.submissions.find((s) => s.assignmentId === assignmentId && s.studentId === currentUser?.id);
@@ -124,50 +136,53 @@ export default function StudentLearningPath({ reloadKey, onProgressChanged }: { 
       <QuizPlayer
         quizId={playingQuiz}
         onExit={() => setPlayingQuiz(null)}
-        onDone={(attemptId) => { setPlayingQuiz(null); setReviewingAttempt(attemptId); void load(); onProgressChanged(); }}
+        onDone={(attemptId) => { setPlayingQuiz(null); setReviewingAttempt(attemptId); void load(); }}
       />
     );
   }
   if (reviewingAttempt) {
-    const quizId = attempts.find((a) => a.attemptId === reviewingAttempt)?.quizId;
+    const attempt = attempts.find((a) => a.attemptId === reviewingAttempt);
+    const quiz = attempt ? quizzesById.get(attempt.quizId) : undefined;
     return (
       <QuizResult
         attemptId={reviewingAttempt}
+        attemptsAllowed={quiz?.maxAttempts}
         onBack={() => setReviewingAttempt(null)}
-        onRetake={quizId ? () => { setReviewingAttempt(null); setPlayingQuiz(quizId); } : undefined}
+        onRetake={quiz ? () => { setReviewingAttempt(null); setPlayingQuiz(quiz.id); } : undefined}
       />
     );
   }
 
-  if (error) {
-    return <SetupError message={error} retry={() => void load()} />;
-  }
-
-  if (loading) return <Loader2 className="mx-auto h-6 w-6 animate-spin text-emerald-700" aria-label="Loading your learning path" />;
-
-  if (units.length === 0) {
-    return <EmptyState icon={Layers3} title="No approved lessons yet" hint="Your teacher's approved topics will appear here, in order." />;
-  }
+  const now = Date.now();
 
   return (
     <div className="space-y-6">
-      {Array.from(groups.entries()).map(([groupId, list]) => {
+      {error && <SetupError message={error} retry={() => void load()} />}
+      {!error && !firstLoadDone && loading && (
+        <Loader2 className="mx-auto h-6 w-6 animate-spin text-emerald-700" aria-label="Loading your learning path" />
+      )}
+      {!error && firstLoadDone && units.length === 0 && (
+        <EmptyState icon={Layers3} title="No approved lessons yet" hint="Your teacher's approved topics will appear here, in order." />
+      )}
+      {!error && firstLoadDone && units.length > 0 && Array.from(groups.entries()).map(([groupId, list]) => {
         const cohort = state.cohorts.find((c) => c.id === groupId);
         const program = state.programs.find((p) => p.id === (cohort?.programId ?? groupId));
+        const cohortEnded = cohort ? new Date(cohort.endDate).getTime() < now : false;
         return (
           <div key={groupId} className="space-y-3">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-700">{cohort?.name ?? program?.title ?? "Course"}</h3>
+            {cohortEnded && (
+              <p className="text-xs font-medium text-rose-700">This course's schedule has ended — lessons can no longer be marked complete or submitted.</p>
+            )}
             {list.map((unit) => {
-              const now = Date.now();
-              const completed = progressByUnit.get(unit.id)?.status === "completed";
-              const locked = !!unit.available_from && new Date(unit.available_from).getTime() > now;
-              const overdue = !completed && !!unit.due_at && new Date(unit.due_at).getTime() < now;
+              const { completed, locked, overdue } = unitState(unit, progressByUnit, now);
               const chip = unitChip(unit, completed, locked, overdue, nextUnitIds.has(unit.id));
               const unitMaterials = materials.filter((m) => m.learning_unit_id === unit.id || (!m.learning_unit_id && (m.cohort_id === unit.cohort_id || m.program_id === unit.program_id)));
-              const quizAttempts = unit.quiz_id ? (attemptsByQuiz.get(unit.quiz_id) ?? []).sort((a, b) => b.attemptNo - a.attemptNo) : [];
-              const quizInProgress = quizAttempts.find((a) => a.status === "in_progress");
-              const quizGraded = quizAttempts.filter((a) => a.status !== "in_progress");
-              const quizBest = quizGraded.reduce<QuizAttemptSummary | null>((acc, a) => (acc && (acc.percent ?? -1) >= (a.percent ?? -1) ? acc : a), null);
+              const quizAttempts = unit.quiz_id ? attemptsByQuiz.get(unit.quiz_id) ?? [] : [];
+              const quiz = unit.quiz_id ? quizzesById.get(unit.quiz_id) : undefined;
+              const quizSummary = quiz ? summarizeAttempts(quizAttempts, quiz.maxAttempts) : null;
+              const quizNotYetOpen = quiz?.opensAt ? new Date(quiz.opensAt).getTime() > now : false;
+              const quizClosedNow = quiz?.closesAt ? new Date(quiz.closesAt).getTime() < now : false;
               const submission = unit.classwork_assignment_id ? classworkSubmission(unit.classwork_assignment_id) : undefined;
               const assignment = unit.classwork_assignment_id ? state.assignments.find((a) => a.id === unit.classwork_assignment_id) : undefined;
 
@@ -189,7 +204,7 @@ export default function StudentLearningPath({ reloadKey, onProgressChanged }: { 
                   {unitMaterials.length > 0 && (
                     <div className="mt-4 grid gap-2 sm:grid-cols-2">
                       {unitMaterials.map((material) => (
-                        <button key={material.id} type="button" onClick={() => openMaterial(material)} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-left hover:border-emerald-200">
+                        <button key={material.id} type="button" onClick={() => setPreview(material)} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-left hover:border-emerald-200">
                           <FileText className="h-4 w-4 shrink-0 text-emerald-700" />
                           <span className="min-w-0"><span className="block truncate text-sm font-medium text-slate-800">{material.title}</span><span className="text-[11px] text-slate-500">{material.material_type}</span></span>
                         </button>
@@ -198,30 +213,32 @@ export default function StudentLearningPath({ reloadKey, onProgressChanged }: { 
                   )}
 
                   <div className="mt-4 flex flex-wrap items-center gap-2">
-                    {unit.quiz_id && (
-                      quizInProgress ? (
-                        <Button size="sm" className="bg-amber-400 text-amber-950 hover:bg-amber-500" disabled={locked} onClick={() => setPlayingQuiz(unit.quiz_id as string)}>
+                    {unit.quiz_id && quiz && quizSummary && (
+                      quizSummary.inProgress ? (
+                        <Button size="sm" className="bg-amber-400 text-amber-950 hover:bg-amber-500" disabled={locked || cohortEnded} onClick={() => setPlayingQuiz(unit.quiz_id as string)}>
                           <PlayCircle className="mr-1.5 h-4 w-4" />Resume quiz
                         </Button>
+                      ) : quizSummary.exhausted ? null : quizNotYetOpen || quizClosedNow ? (
+                        <Button size="sm" variant="outline" disabled>{quizNotYetOpen ? "Quiz not open yet" : "Quiz closed"}</Button>
                       ) : (
-                        <Button size="sm" variant="outline" disabled={locked} onClick={() => setPlayingQuiz(unit.quiz_id as string)}>
-                          <PlayCircle className="mr-1.5 h-4 w-4" />{quizGraded.length > 0 ? "Retake quiz" : "Start quiz"}
+                        <Button size="sm" variant="outline" disabled={locked || cohortEnded} onClick={() => setPlayingQuiz(unit.quiz_id as string)}>
+                          <PlayCircle className="mr-1.5 h-4 w-4" />{quizSummary.attemptsUsed > 0 ? "Retake quiz" : "Start quiz"}
                         </Button>
                       )
                     )}
-                    {quizBest && (
-                      <Button size="sm" variant="ghost" onClick={() => setReviewingAttempt(quizBest.attemptId)}>
-                        <Badge className={cn("mr-1.5", quizBest.passed ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-700")}>{quizBest.percent}%</Badge>
+                    {quizSummary?.best && (
+                      <Button size="sm" variant="ghost" onClick={() => setReviewingAttempt(quizSummary.best!.attemptId)}>
+                        <Badge className={cn("mr-1.5", quizSummary.best.passed ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-700")}>{quizSummary.best.percent}%</Badge>
                         Quiz result
                       </Button>
                     )}
                     {unit.classwork_assignment_id && (
                       !submission || submission.status === "Missing" ? (
-                        <Button size="sm" variant="outline" disabled={locked} onClick={() => setClasswork({ unit, assignmentId: unit.classwork_assignment_id as string })}>
+                        <Button size="sm" variant="outline" disabled={locked || cohortEnded} onClick={() => setClasswork({ unit, assignmentId: unit.classwork_assignment_id as string, resuming: false })}>
                           <Clock className="mr-1.5 h-4 w-4" />Start classwork
                         </Button>
                       ) : submission.status === "In Progress" ? (
-                        <Button size="sm" className="bg-amber-400 text-amber-950 hover:bg-amber-500" onClick={() => setClasswork({ unit, assignmentId: unit.classwork_assignment_id as string })}>
+                        <Button size="sm" className="bg-amber-400 text-amber-950 hover:bg-amber-500" disabled={cohortEnded} onClick={() => setClasswork({ unit, assignmentId: unit.classwork_assignment_id as string, resuming: true })}>
                           <Clock className="mr-1.5 h-4 w-4" />Resume classwork
                         </Button>
                       ) : (
@@ -231,7 +248,7 @@ export default function StudentLearningPath({ reloadKey, onProgressChanged }: { 
                       )
                     )}
                     {!completed && (
-                      <Button size="sm" variant="outline" disabled={locked || busyUnit === unit.id} onClick={() => void markComplete(unit)}>
+                      <Button size="sm" variant="outline" disabled={locked || cohortEnded || busyUnit === unit.id} onClick={() => void markComplete(unit)}>
                         {busyUnit === unit.id ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-4 w-4" />}Mark complete
                       </Button>
                     )}
@@ -247,12 +264,13 @@ export default function StudentLearningPath({ reloadKey, onProgressChanged }: { 
       <MaterialPreviewDialog material={preview} open={!!preview} onOpenChange={(open) => !open && setPreview(null)} />
       {classwork && currentUser && (
         <ClassworkDialog
-          open={!!classwork}
           onOpenChange={(open) => !open && setClasswork(null)}
           assignmentId={classwork.assignmentId}
           studentId={currentUser.id}
           unitTitle={classwork.unit.title}
-          onSubmitted={() => { setClasswork(null); void refresh(); void load(); onProgressChanged(); }}
+          resuming={classwork.resuming}
+          timeLimitMinutes={state.assignments.find((a) => a.id === classwork.assignmentId)?.timeLimitMinutes ?? null}
+          onSubmitted={() => { setClasswork(null); void refresh(); void load(); }}
         />
       )}
     </div>

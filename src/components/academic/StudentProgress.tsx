@@ -27,21 +27,23 @@ function windowLabel(status: MyCourseStatus): string {
  */
 export default function StudentProgress({ reloadKey }: { reloadKey: number }) {
   const { currentUser } = useApp();
+  const userId = currentUser?.id;
   const [rows, setRows] = useState<MyCourseStatus[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [firstLoadDone, setFirstLoadDone] = useState(false);
 
   const load = useCallback(async () => {
-    if (!currentUser) return;
+    if (!userId) return;
     setLoading(true); setError("");
     try { setRows(await academicApi.myCourseStatus()); }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
-    finally { setLoading(false); }
-  }, [currentUser]);
+    finally { setLoading(false); setFirstLoadDone(true); }
+  }, [userId]);
   useEffect(() => { void load(); }, [load, reloadKey]);
 
   if (error) return <SetupError message={error} retry={() => void load()} />;
-  if (loading) return <Loader2 className="mx-auto h-6 w-6 animate-spin text-emerald-700" aria-label="Loading your progress" />;
+  if (!firstLoadDone && loading) return <Loader2 className="mx-auto h-6 w-6 animate-spin text-emerald-700" aria-label="Loading your progress" />;
   if (rows.length === 0) return <EmptyState icon={GraduationCap} title="No course progress yet" hint="Submit a course plan to begin tracking progress and attendance." />;
 
   return (

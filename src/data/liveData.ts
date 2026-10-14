@@ -327,6 +327,7 @@ export async function fetchState(previous: AppState): Promise<FetchResult> {
       dueDate: txt(a.due_date).slice(0, 10),
       maxMarks: num(a, "max_marks", 100),
       description: txt(a.description),
+      timeLimitMinutes: a.time_limit_minutes === null || a.time_limit_minutes === undefined ? null : Number(a.time_limit_minutes),
     })),
     submissions: ((submissions.data ?? []) as Row[]).map((s) => ({
       id: txt(s.id),

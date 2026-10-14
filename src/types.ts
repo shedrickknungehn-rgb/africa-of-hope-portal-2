@@ -77,6 +77,7 @@ export interface Assignment {
   dueDate: string;
   maxMarks: number;
   description: string;
+  timeLimitMinutes?: number | null;
 }
 
 export interface Submission {

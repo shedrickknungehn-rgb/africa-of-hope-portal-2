@@ -134,6 +134,7 @@ export function explainAcademicError(error: { message: string; details?: string 
     unit_not_available: "This lesson isn't available yet. Check back once it opens.",
     classwork_already_submitted: "You already submitted this classwork.",
     classwork_empty: "Add a response or attach a file before you submit.",
+    available_after_due: "\"Available from\" must be before the lesson's due date.",
   };
   if (friendly[error.message]) return friendly[error.message];
   return error.message;
@@ -260,13 +261,13 @@ export function safeTrainingMaterialName(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 100);
 }
 
-export function trainingMaterialPath(cohortId: string, teacherId: string, name: string, timestamp: number): string {
-  return `${cohortId}/${teacherId}/${timestamp}-${safeTrainingMaterialName(name)}`;
+// Shared by training materials and classwork attachments: both live in a bucket scoped by
+// an owning record id (cohort or assignment) and the uploading user's id.
+export function trainingMaterialPath(scopeId: string, uploaderId: string, name: string, timestamp: number): string {
+  return `${scopeId}/${uploaderId}/${timestamp}-${safeTrainingMaterialName(name)}`;
 }
 
-export function classworkAttachmentPath(assignmentId: string, studentId: string, name: string, timestamp: number): string {
-  return `${assignmentId}/${studentId}/${timestamp}-${safeTrainingMaterialName(name)}`;
-}
+export const TRAINING_MATERIAL_ACCEPT = ".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.zip,image/*,audio/*,video/*";
 
 export function createAcademicApi(client: AcademicApiClient, now: () => number = Date.now) {
   async function rows<T>(table: string, query?: (request: AcademicRowsQuery) => AcademicRowsQuery): Promise<T[]> {
@@ -276,6 +277,24 @@ export function createAcademicApi(client: AcademicApiClient, now: () => number =
     const message = explainAcademicError(error);
     if (message) throw new Error(message);
     return (data ?? []) as T[];
+  }
+
+  async function uploadValidated(
+    bucket: string,
+    scopeId: string,
+    uploaderId: string,
+    file: File,
+    tooLargeMessage: string,
+  ): Promise<{ path: string; mime: string }> {
+    if (file.size > MAX_TRAINING_MATERIAL_BYTES) throw new Error(tooLargeMessage);
+    if (!SUPPORTED_TRAINING_MATERIAL_MIME_TYPES.has(file.type)) throw new Error("This file format is not supported. Use PDF, Office, image, audio, video, text, or ZIP files.");
+    const path = trainingMaterialPath(scopeId, uploaderId, file.name, now());
+    const { error } = await client.storage.from(bucket).upload(path, file, {
+      contentType: file.type || "application/octet-stream",
+      upsert: false,
+    });
+    if (error) throw new Error(explainAcademicError(error) ?? error.message);
+    return { path, mime: file.type || "application/octet-stream" };
   }
 
   return {
@@ -361,21 +380,14 @@ export function createAcademicApi(client: AcademicApiClient, now: () => number =
       p_classwork_weight: assessment.classworkWeight,
       p_quiz_minutes: assessment.quizMinutes,
       p_quiz_weight: assessment.quizWeight,
+      p_available_from: payload.available_from ?? null,
     });
     const message = explainAcademicError(error);
     if (message) throw new Error(message);
     return data as LearningUnit;
   },
   async uploadMaterial(file: File, cohortId: string, teacherId: string): Promise<{ path: string; mime: string }> {
-    if (file.size > MAX_TRAINING_MATERIAL_BYTES) throw new Error("Training materials must be 25 MB or smaller.");
-    if (!SUPPORTED_TRAINING_MATERIAL_MIME_TYPES.has(file.type)) throw new Error("This file format is not supported. Use PDF, Office, image, audio, video, text, or ZIP files.");
-    const path = trainingMaterialPath(cohortId, teacherId, file.name, now());
-    const { error } = await client.storage.from("training-materials").upload(path, file, {
-      contentType: file.type || "application/octet-stream",
-      upsert: false,
-    });
-    if (error) throw new Error(explainAcademicError(error) ?? error.message);
-    return { path, mime: file.type || "application/octet-stream" };
+    return uploadValidated("training-materials", cohortId, teacherId, file, "Training materials must be 25 MB or smaller.");
   },
   async deleteMaterialUpload(path: string) {
     const { error } = await client.storage.from("training-materials").remove([path]);
@@ -458,15 +470,7 @@ export function createAcademicApi(client: AcademicApiClient, now: () => number =
     return data as ClassworkSubmitResult;
   },
   async uploadClassworkAttachment(assignmentId: string, studentId: string, file: File): Promise<{ path: string; mime: string }> {
-    if (file.size > MAX_TRAINING_MATERIAL_BYTES) throw new Error("Classwork attachments must be 25 MB or smaller.");
-    if (!SUPPORTED_TRAINING_MATERIAL_MIME_TYPES.has(file.type)) throw new Error("This file format is not supported. Use PDF, Office, image, audio, video, text, or ZIP files.");
-    const path = classworkAttachmentPath(assignmentId, studentId, file.name, now());
-    const { error } = await client.storage.from("classwork-submissions").upload(path, file, {
-      contentType: file.type || "application/octet-stream",
-      upsert: false,
-    });
-    if (error) throw new Error(explainAcademicError(error) ?? error.message);
-    return { path, mime: file.type || "application/octet-stream" };
+    return uploadValidated("classwork-submissions", assignmentId, studentId, file, "Classwork attachments must be 25 MB or smaller.");
   },
   };
 }

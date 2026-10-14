@@ -5,6 +5,7 @@ import {
   BadgeCheck, RefreshCw, Globe, Megaphone, type LucideIcon,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
+import { isAnnouncementLiveFor } from "@/lib/announcements";
 import { cn } from "@/lib/utils";
 import { ROLES } from "../lib/permissions";
 import { useVisiblePortalViews, portalViewLabel } from "../portalViews";
@@ -194,32 +195,37 @@ function Pop({
   );
 }
 
+function readDismissedIds(): string[] {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem("dismissed-announcement-ids") ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
- * G6: a dismissible scrolling ticker of currently-visible announcements for
- * students and teachers, shown above the portal content on every view
- * except the Bulletin Board itself (which already lists them in full).
- * Reuses the Marquee component and visibility rules from the public site
- * announcement banner (audience/status/schedule window), scoped here to
- * the signed-in user's own audience instead of "public".
+ * G6: a dismissible ticker of currently-visible announcements for students
+ * and teachers, shown above the portal content on every view except the
+ * Bulletin Board itself (which already lists them in full). The Marquee
+ * provides a decorative, non-interactive scroll of the same text that's
+ * already announced via the sr-only live region; a separate "View bulletin
+ * board" link is the one focusable, keyboard-reachable way to act on it.
+ * Reuses the visibility rules from the public site announcement banner
+ * (audience/status/schedule window), scoped here to the signed-in user's
+ * own audience instead of "public".
  */
 function PortalAnnouncementTicker({ onOpenBoard }: { onOpenBoard: () => void }) {
   const { state, currentUser } = useApp();
-  const [dismissedIds, setDismissedIds] = useState<string[]>(() => {
-    try { return JSON.parse(sessionStorage.getItem("dismissed-announcement-ids") ?? "[]"); }
-    catch { return []; }
-  });
+  const prefersReducedMotion = useReducedMotion();
+  const [dismissedIds, setDismissedIds] = useState<string[]>(readDismissedIds);
 
   const items = useMemo(() => {
     if (currentUser?.role !== "Student" && currentUser?.role !== "Teacher") return [];
     const now = Date.now();
     return state.announcements.filter((item) => {
-      const audience = item.audience ?? "all";
-      if (audience === "students" && currentUser.role !== "Student") return false;
-      if (audience === "teachers" && currentUser.role !== "Teacher") return false;
-      if (audience === "public") return false;
-      if (item.status === "draft") return false;
-      if (item.scheduledAt && new Date(item.scheduledAt).getTime() > now) return false;
-      if (item.expiresAt && new Date(item.expiresAt).getTime() <= now) return false;
+      if ((item.audience ?? "all") === "public") return false;
+      if (!isAnnouncementLiveFor(item, currentUser.role, now)) return false;
       return !dismissedIds.includes(item.id) && (item.title.trim() || item.body.trim());
     });
   }, [state.announcements, currentUser, dismissedIds]);
@@ -227,21 +233,30 @@ function PortalAnnouncementTicker({ onOpenBoard }: { onOpenBoard: () => void }) 
   const dismiss = () => {
     const next = [...dismissedIds, ...items.map((item) => item.id)];
     setDismissedIds(next);
-    sessionStorage.setItem("dismissed-announcement-ids", JSON.stringify(next));
+    try { sessionStorage.setItem("dismissed-announcement-ids", JSON.stringify(next)); }
+    catch { /* sessionStorage may be unavailable (private mode, quota) */ }
   };
 
   if (items.length === 0) return null;
+  const text = items.map((item) => `${item.title}${item.body ? ` — ${item.body}` : ""}`);
   return (
     <div className="mb-3 flex items-center gap-2 overflow-hidden rounded-xl border border-amber-200 bg-amber-50 px-3 py-2" role="region" aria-label="Announcements">
       <Megaphone className="h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
-      <div className="sr-only" aria-live="polite">{items.map((item) => `${item.title}${item.body ? ` — ${item.body}` : ""}`).join(". ")}</div>
-      <Marquee repeat={2} pauseOnHover applyMask={false} className="min-w-0 flex-1 overflow-hidden p-0 text-xs font-medium text-amber-900 [--duration:28s] [--gap:3rem]" aria-hidden="true">
-        {items.map((item) => (
-          <button key={item.id} type="button" onClick={onOpenBoard} className="whitespace-nowrap underline-offset-2 hover:underline">
-            {item.title}{item.body ? ` — ${item.body}` : ""}
-          </button>
-        ))}
-      </Marquee>
+      <div className="sr-only" aria-live="polite">{text.join(". ")}</div>
+      {prefersReducedMotion ? (
+        <p className="min-w-0 flex-1 truncate text-xs font-medium text-amber-900" aria-hidden="true">{text.join("   ·   ")}</p>
+      ) : (
+        <Marquee repeat={2} pauseOnHover applyMask={false} className="min-w-0 flex-1 overflow-hidden p-0 text-xs font-medium text-amber-900 [--duration:28s] [--gap:3rem]" aria-hidden="true">
+          {items.map((item) => (
+            <span key={item.id} tabIndex={-1} className="whitespace-nowrap">
+              {item.title}{item.body ? ` — ${item.body}` : ""}
+            </span>
+          ))}
+        </Marquee>
+      )}
+      <button type="button" onClick={onOpenBoard} className="shrink-0 whitespace-nowrap text-xs font-semibold text-amber-900 underline-offset-2 hover:underline">
+        View bulletin board
+      </button>
       <button type="button" onClick={dismiss} aria-label="Dismiss announcements" className="shrink-0 rounded-full p-1 text-amber-700 hover:bg-amber-100">
         <X className="h-3.5 w-3.5" />
       </button>

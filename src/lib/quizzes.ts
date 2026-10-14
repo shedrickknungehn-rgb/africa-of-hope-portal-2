@@ -420,3 +420,34 @@ export async function fetchMyQuizAttempts(): Promise<QuizAttemptSummary[]> {
   asError(error);
   return (data ?? []).map(mapAttemptSummary);
 }
+
+/** Groups a flat list of attempts (any quizzes) by quiz id, preserving input order within each group. */
+export function groupAttemptsByQuiz(attempts: QuizAttemptSummary[]): Map<string, QuizAttemptSummary[]> {
+  const map = new Map<string, QuizAttemptSummary[]>();
+  for (const a of attempts) {
+    const list = map.get(a.quizId) ?? [];
+    list.push(a);
+    map.set(a.quizId, list);
+  }
+  return map;
+}
+
+export interface AttemptsSummary {
+  mine: QuizAttemptSummary[];
+  inProgress: QuizAttemptSummary | null;
+  graded: QuizAttemptSummary[];
+  best: QuizAttemptSummary | null;
+  attemptsUsed: number;
+  exhausted: boolean;
+}
+
+/** Summarizes one quiz's attempts (newest first) against its attempt limit. Never mutates `attempts`. */
+export function summarizeAttempts(attempts: QuizAttemptSummary[], maxAttempts: number): AttemptsSummary {
+  const mine = [...attempts].sort((a, b) => b.attemptNo - a.attemptNo);
+  const inProgress = mine.find((a) => a.status === "in_progress") ?? null;
+  const graded = mine.filter((a) => a.status !== "in_progress");
+  const best = graded.reduce<QuizAttemptSummary | null>((acc, a) => (acc && (acc.percent ?? -1) >= (a.percent ?? -1) ? acc : a), null);
+  const attemptsUsed = mine.length;
+  const exhausted = attemptsUsed >= maxAttempts && !inProgress;
+  return { mine, inProgress, graded, best, attemptsUsed, exhausted };
+}
