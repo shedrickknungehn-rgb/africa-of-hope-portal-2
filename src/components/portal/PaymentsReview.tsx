@@ -31,7 +31,7 @@ const STATUS_FILTERS: Array<{ value: PaymentSubmissionStatus | "all"; label: str
 ];
 
 function SubmissionsTab() {
-  const { state } = useApp();
+  const { state, reloadKey } = useApp();
   const [submissions, setSubmissions] = useState<PaymentSubmission[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -55,7 +55,7 @@ function SubmissionsTab() {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [reloadKey]);
 
   const visible = useMemo(() => {
     const rows = filter === "all" ? submissions : submissions.filter((s) => s.status === filter);
@@ -214,6 +214,7 @@ const emptyChannelForm: PaymentChannelInput = {
 };
 
 function ChannelsTab() {
+  const { reloadKey } = useApp();
   const [channels, setChannels] = useState<PaymentChannel[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -232,7 +233,7 @@ function ChannelsTab() {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [reloadKey]);
 
   const startCreate = () => { setEditing(null); setForm(emptyChannelForm); setOpen(true); };
   const startEdit = (c: PaymentChannel) => {

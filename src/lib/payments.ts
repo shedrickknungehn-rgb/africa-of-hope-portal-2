@@ -206,6 +206,9 @@ export function explainPaymentError(error: { message: string; code?: string } | 
   if (/row-level security|permission denied|not authorized/i.test(error.message)) {
     return "You don't have permission to do that.";
   }
+  if (/fee_transactions_amount_check|violates check constraint/i.test(error.message)) {
+    return "Enter a USD ledger amount greater than zero (after rounding to cents) for this payment.";
+  }
   return error.message;
 }
 

@@ -81,7 +81,7 @@ function BodyPreview({ body }: { body: string }) {
 }
 
 export default function BlogManager() {
-  const { currentUser } = useApp();
+  const { currentUser, reloadKey } = useApp();
   const canManage = usePermission("blog.manage");
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -111,7 +111,7 @@ export default function BlogManager() {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [reloadKey]);
 
   const filtered = useMemo(() => {
     return posts.filter((p) => {

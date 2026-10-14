@@ -84,6 +84,12 @@ test("explainPaymentError translates known RPC error codes into friendly text", 
   assert.match(explainPaymentError({ message: "invalid_payer_phone" }) ?? "", /valid mobile money number/);
   assert.match(explainPaymentError({ message: "category_too_long" }) ?? "", /60 characters/);
   assert.match(explainPaymentError({ message: "note_too_long" }) ?? "", /500 characters/);
+  assert.match(
+    explainPaymentError({
+      message: 'new row for relation "fee_transactions" violates check constraint "fee_transactions_amount_check"',
+    }) ?? "",
+    /greater than zero/,
+  );
   assert.equal(explainPaymentError(null), null);
 });
 

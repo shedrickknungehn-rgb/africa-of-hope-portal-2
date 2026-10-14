@@ -30,7 +30,7 @@ const emptyForm = {
 };
 
 export default function StudentPayments() {
-  const { currentUser } = useApp();
+  const { currentUser, reloadKey } = useApp();
   const [channels, setChannels] = useState<PaymentChannel[]>([]);
   const [submissions, setSubmissions] = useState<PaymentSubmission[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,7 +55,7 @@ export default function StudentPayments() {
   };
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { void load(); }, [currentUser?.id]);
+  useEffect(() => { void load(); }, [currentUser?.id, reloadKey]);
 
   const selectedChannel = channels.find((c) => c.id === form.channelId) ?? null;
 

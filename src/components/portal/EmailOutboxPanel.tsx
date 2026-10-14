@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, Reveal, SectionHeader, StatCard, panelClass } from "../Navigation";
 import { cn } from "@/lib/utils";
+import { useApp } from "@/context/AppContext";
 
 const STATUS_TONE: Record<EmailOutboxStatus, string> = {
   queued: "bg-slate-100 text-slate-700",
@@ -18,6 +19,7 @@ const STATUS_TONE: Record<EmailOutboxStatus, string> = {
 };
 
 export default function EmailOutboxPanel() {
+  const { reloadKey } = useApp();
   const [rows, setRows] = useState<EmailOutboxRow[]>([]);
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [statusCounts, setStatusCounts] = useState<EmailOutboxCounts | null>(null);
@@ -44,7 +46,7 @@ export default function EmailOutboxPanel() {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [reloadKey]);
 
   // The status endpoint's counts cover every email ever queued; `rows` is
   // capped at the 50 most recent, so counting from `rows` alone would be

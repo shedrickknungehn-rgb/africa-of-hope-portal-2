@@ -87,6 +87,8 @@ interface AppContextValue {
   currentUser: User | null;
   loading: boolean;
   live: boolean;
+  /** Bumped by resetDemoData(); components that fetch their own data outside `state` (e.g. payments, blog) should include this in their refetch effect's dependencies so the "Reload live data" action refreshes them too. */
+  reloadKey: number;
   refresh: () => Promise<void>;
   /** Resolves to an error message, or null on success. */
   login: (emailOrUserId: string, password?: string) => Promise<string | null>;
@@ -296,6 +298,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       currentUser,
       loading,
       live,
+      reloadKey,
       refresh,
       login: async (emailOrUserId, password) => {
         const existing = state.users.find((u) => u.id === emailOrUserId);
@@ -839,7 +842,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       },
     };
     return value;
-  }, [state, sessionUserId, activeUserId, loading, live, refresh]);
+  }, [state, sessionUserId, activeUserId, loading, live, refresh, reloadKey]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
