@@ -2,6 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Award, Printer, Plus, Check, X, Search, CalendarDays } from "lucide-react";
 import { useApp } from "../context/AppContext";
+import { usePermission } from "../hooks/usePermission";
 import type { Certificate } from "../types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -76,7 +77,7 @@ const statusPill = (status: string) => (
 
 export function CertificateStudio() {
   const { state, currentUser, issueCertificate } = useApp();
-  const isAdmin = currentUser?.role === "Super Admin" || currentUser?.role === "School Admin";
+  const isAdmin = usePermission("certificates.manage");
   const [studentId, setStudentId] = useState("");
   const [programId, setProgramId] = useState("");
   const [honors, setHonors] = useState("Pass");

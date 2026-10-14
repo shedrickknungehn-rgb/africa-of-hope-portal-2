@@ -5,6 +5,7 @@ const MB = 1024 * 1024;
 const AVATAR_BUCKET = "avatars";
 const PROGRAM_IMAGE_BUCKET = "program-images";
 const DOCUMENT_BUCKET = "documents";
+const SITE_ASSETS_BUCKET = "site-assets";
 
 export const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 export const DOCUMENT_TYPES = [
@@ -103,6 +104,10 @@ export const uploadProgramImage = (programId: string, file: File) =>
 
 export const pruneProgramImages = (programId: string, keepUrl?: string) =>
   pruneFolder(PROGRAM_IMAGE_BUCKET, programId, keepUrl);
+
+/** Uploads a CMS image (logo, favicon, hero slide, section photo…) and returns its public URL. */
+export const uploadSiteAsset = (folder: string, file: File) =>
+  uploadPublicImage(SITE_ASSETS_BUCKET, folder, file);
 
 // ── Personal documents (private bucket, "profiles/<uid>/<ts>__<category>__<name>") ──
 

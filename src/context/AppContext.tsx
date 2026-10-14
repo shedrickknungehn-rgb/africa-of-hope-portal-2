@@ -10,7 +10,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { fetchState, settingsRow, today, uid, type Row } from "@/data/liveData";
+import { fetchState, mergeWebsiteSettings, settingsRow, today, uid, type Row } from "@/data/liveData";
 import type {
   Announcement,
   AppState,
@@ -20,15 +20,19 @@ import type {
   Cohort,
   FeeTransaction,
   Program,
+  Role,
   SystemSettings,
   User,
-  WebsiteListKey,
   WebsiteSettings,
 } from "../types";
 import { defaultSettings, defaultWebsiteSettings, initialState } from "../data/mockData";
+import { DEFAULT_ROLE_PERMISSIONS, type PermissionKey } from "../lib/permissions";
 
-const CACHE_KEY = "africa-of-hope-portal-cache-v4";
-const SESSION_KEY = "africa-of-hope-session-v4";
+// v5: the roles & permissions migration tightens RLS considerably, so a
+// previous admin's cached profiles/fees/role grants must never leak into
+// the next person's session. Bumping this key discards any v4 cache.
+const CACHE_KEY = "africa-of-hope-portal-cache-v5";
+const SESSION_KEY = "africa-of-hope-session-v5";
 
 const LIVE_TABLES = [
   "profiles",
@@ -43,6 +47,7 @@ const LIVE_TABLES = [
   "certificates",
   "announcements",
   "system_settings",
+  "role_permissions",
 ];
 
 export interface RegistrationPayload {
@@ -104,19 +109,17 @@ interface AppContextValue {
   issueCertificate: (studentId: string, programId: string, honors: string) => Certificate;
   addAnnouncement: (payload: Omit<Announcement, "id" | "date">) => void;
   updateSystemSettings: (patch: Partial<SystemSettings>) => void;
-  updateWebsiteSettings: (patch: Partial<WebsiteSettings>) => void;
-  addToWebsiteList: <K extends WebsiteListKey>(key: K, item: WebsiteSettings[K][number]) => void;
-  updateInWebsiteList: <K extends WebsiteListKey>(
-    key: K,
-    id: string,
-    patch: Partial<WebsiteSettings[K][number]>,
-  ) => void;
-  removeFromWebsiteList: (key: WebsiteListKey, id: string) => void;
-  moveInWebsiteList: (key: WebsiteListKey, id: string, dir: -1 | 1) => void;
-  resetWebsiteSettings: () => void;
+  /** Publishes a whole settings object live (the CMS editor's "Publish changes" button). */
+  publishWebsiteSettings: (next: WebsiteSettings) => Promise<string | null>;
   clearTransactionalData: () => void;
   importSystemData: (data: Partial<AppState>) => void;
   resetDemoData: () => void;
+  /** Thin wrapper around the admin-users edge function; toasts and refreshes. Resolves to an error message, or null on success. */
+  adminUsers: (action: string, body: Record<string, unknown>) => Promise<string | null>;
+  /** Sets a student's programmes and diffs cohort_students to match the given cohorts. */
+  assignStudent: (id: string, programIds: string[], cohortIds: string[]) => Promise<string | null>;
+  setRolePermission: (role: Role, permission: PermissionKey, on: boolean) => void;
+  resetRolePermissions: (role: Role) => void;
 }
 
 /** Explains errors caused by the profile/programme-image migration not being applied yet. */
@@ -133,7 +136,7 @@ function normalize(raw: Partial<AppState> | null): AppState {
     ...initialState,
     ...(raw ?? {}),
     settings: { ...defaultSettings, ...(raw?.settings ?? {}) },
-    websiteSettings: { ...defaultWebsiteSettings, ...(raw?.websiteSettings ?? {}) },
+    websiteSettings: mergeWebsiteSettings(defaultWebsiteSettings, raw?.websiteSettings),
   };
 }
 
@@ -244,8 +247,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void supabase.auth
       .getSession()
       .then(({ data }) => setSessionUserId(data.session?.user.id ?? null));
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSessionUserId(session?.user.id ?? null);
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      const nextId = session?.user.id ?? null;
+      setSessionUserId((prevId) => {
+        // A sign-out, or signing in as a different account, must never let
+        // the previous person's cached profiles/fees/role grants leak into
+        // the next session (tighter RLS now makes that a real risk, not
+        // just stale UI). Skip the very first resolution (prevId is still
+        // "unknown"), which would otherwise flash the sign-in screen on
+        // every page load for an already signed-in visitor.
+        const switchedAccount = prevId !== null && prevId !== nextId;
+        if (event === "SIGNED_OUT" || switchedAccount) {
+          setState(initialState);
+          setReloadKey((k) => k + 1);
+        }
+        return nextId;
+      });
       if (!session) setActiveUserId(null);
     });
     return () => data.subscription.unsubscribe();
@@ -257,17 +274,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       state.users.find((u) => u.id === activeUserId) ??
       null;
 
-    const persistWebsite = (websiteSettings: WebsiteSettings) =>
-      push(
-        "Website settings",
-        supabase
-          .from("system_settings")
-          .upsert(settingsRow(state.settings, websiteSettings), { onConflict: "id" }),
-      );
-
-    const saveWebsite = (websiteSettings: WebsiteSettings) => {
+    const publishWebsiteSettings = async (websiteSettings: WebsiteSettings) => {
       setState((s) => ({ ...s, websiteSettings }));
-      persistWebsite(websiteSettings);
+      // Updates only the website_settings column (needs cms.manage, not settings.manage),
+      // instead of upserting the whole row, so it never overwrites settings a parallel
+      // "System Settings" save just wrote.
+      const { error } = await supabase
+        .from("system_settings")
+        .update({ website_settings: websiteSettings })
+        .eq("id", true);
+      return error?.message ?? null;
     };
 
     const patchUser = (id: string, patch: Row, local: (u: User) => User, label: string) => {
@@ -308,6 +324,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       logout: () => {
         setActiveUserId(null);
         setSessionUserId(null);
+        setState(initialState);
         void supabase.auth.signOut();
         toast.success("Signed out.");
       },
@@ -692,35 +709,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             .upsert(settingsRow(settings, state.websiteSettings), { onConflict: "id" }),
         );
       },
-      updateWebsiteSettings: (patch) => saveWebsite({ ...state.websiteSettings, ...patch }),
-      addToWebsiteList: (key, item) => {
-        const list = [...(state.websiteSettings[key] as { id: string }[]), item];
-        saveWebsite({ ...state.websiteSettings, [key]: list } as unknown as WebsiteSettings);
-      },
-      updateInWebsiteList: (key, id, patch) => {
-        const list = (state.websiteSettings[key] as { id: string }[]).map((entry) =>
-          entry.id === id ? { ...entry, ...patch } : entry,
-        );
-        saveWebsite({ ...state.websiteSettings, [key]: list } as unknown as WebsiteSettings);
-      },
-      removeFromWebsiteList: (key, id) => {
-        const list = (state.websiteSettings[key] as { id: string }[]).filter(
-          (entry) => entry.id !== id,
-        );
-        saveWebsite({ ...state.websiteSettings, [key]: list } as unknown as WebsiteSettings);
-      },
-      moveInWebsiteList: (key, id, dir) => {
-        const list = [...(state.websiteSettings[key] as { id: string }[])];
-        const index = list.findIndex((entry) => entry.id === id);
-        const target = index + dir;
-        if (index < 0 || target < 0 || target >= list.length) return;
-        [list[index], list[target]] = [list[target], list[index]];
-        saveWebsite({ ...state.websiteSettings, [key]: list } as unknown as WebsiteSettings);
-      },
-      resetWebsiteSettings: () => {
-        saveWebsite(defaultWebsiteSettings);
-        toast.success("Website content restored to defaults.");
-      },
+      publishWebsiteSettings,
       clearTransactionalData: () => {
         setState((s) => ({ ...s, attendance: [], submissions: [], fees: [], certificates: [] }));
         ["attendance", "submissions", "fee_transactions", "certificates"].forEach((table) =>
@@ -738,6 +727,115 @@ export function AppProvider({ children }: { children: ReactNode }) {
       resetDemoData: () => {
         setReloadKey((k) => k + 1);
         toast.success("Portal reloaded from the live database.");
+      },
+      adminUsers: async (action, body) => {
+        const { data, error } = await supabase.functions.invoke("admin-users", {
+          body: { action, ...body },
+        });
+        const payload = data as { error?: string; user_id?: string } | null;
+        if (error || payload?.error) {
+          const message = payload?.error ?? error?.message ?? "Request failed";
+          toast.error(message);
+          return message;
+        }
+        const labels: Record<string, string> = {
+          create: "Staff account created.",
+          update: "Account updated.",
+          reset_password: "Password reset started.",
+          delete: "Account deleted.",
+        };
+        toast.success(labels[action] ?? "Done.");
+        await refresh();
+        return null;
+      },
+      assignStudent: async (id, programIds, cohortIds) => {
+        const { error: profileError } = await supabase
+          .from("profiles")
+          .update({ program_ids: programIds })
+          .eq("id", id);
+        if (profileError) {
+          toast.error(`Assign programmes: ${profileError.message}`);
+          return profileError.message;
+        }
+        const current = state.cohorts.filter((c) => c.studentIds.includes(id)).map((c) => c.id);
+        const toAdd = cohortIds.filter((c) => !current.includes(c));
+        const toRemove = current.filter((c) => !cohortIds.includes(c));
+        if (toAdd.length) {
+          const { error } = await supabase
+            .from("cohort_students")
+            .insert(toAdd.map((cohort_id) => ({ cohort_id, student_id: id })));
+          if (error) {
+            toast.error(`Assign cohorts: ${error.message}`);
+            return error.message;
+          }
+        }
+        if (toRemove.length) {
+          const { error } = await supabase
+            .from("cohort_students")
+            .delete()
+            .eq("student_id", id)
+            .in("cohort_id", toRemove);
+          if (error) {
+            toast.error(`Remove cohorts: ${error.message}`);
+            return error.message;
+          }
+        }
+        setState((s) => ({
+          ...s,
+          users: s.users.map((u) => (u.id === id ? { ...u, programIds, cohortIds } : u)),
+          cohorts: s.cohorts.map((c) => ({
+            ...c,
+            studentIds: cohortIds.includes(c.id)
+              ? Array.from(new Set([...c.studentIds, id]))
+              : c.studentIds.filter((sid) => sid !== id),
+          })),
+        }));
+        toast.success("Assignment saved.");
+        return null;
+      },
+      setRolePermission: (role, permission, on) => {
+        if (role === "Super Admin") return;
+        const key = role as Exclude<Role, "Super Admin">;
+        const prevList = state.rolePermissions[role] ?? DEFAULT_ROLE_PERMISSIONS[key] ?? [];
+        const nextList = on
+          ? Array.from(new Set([...prevList, permission]))
+          : prevList.filter((p) => p !== permission);
+        setState((s) => ({ ...s, rolePermissions: { ...s.rolePermissions, [role]: nextList } }));
+        const task = on
+          ? supabase.from("role_permissions").upsert({ role, permission }, { onConflict: "role,permission" })
+          : supabase.from("role_permissions").delete().eq("role", role).eq("permission", permission);
+        void Promise.resolve(task).then((res) => {
+          const resError = (res as { error?: { message: string } | null } | null)?.error;
+          if (resError) {
+            setState((s) => ({ ...s, rolePermissions: { ...s.rolePermissions, [role]: prevList } }));
+            toast.error(`Permission update failed: ${resError.message}`);
+          }
+        });
+      },
+      resetRolePermissions: (role) => {
+        if (role === "Super Admin") return;
+        const key = role as Exclude<Role, "Super Admin">;
+        const defaults = DEFAULT_ROLE_PERMISSIONS[key] ?? [];
+        const prevList = state.rolePermissions[role] ?? [];
+        setState((s) => ({ ...s, rolePermissions: { ...s.rolePermissions, [role]: defaults } }));
+        void (async () => {
+          const del = await supabase.from("role_permissions").delete().eq("role", role);
+          if (del.error) {
+            toast.error(`Reset failed: ${del.error.message}`);
+            setState((s) => ({ ...s, rolePermissions: { ...s.rolePermissions, [role]: prevList } }));
+            return;
+          }
+          if (defaults.length) {
+            const ins = await supabase
+              .from("role_permissions")
+              .insert(defaults.map((permission) => ({ role, permission })));
+            if (ins.error) {
+              toast.error(`Reset failed: ${ins.error.message}`);
+              return;
+            }
+          }
+          toast.success(`${role} reset to defaults.`);
+        })();
       },
     };
     return value;

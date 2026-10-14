@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } f
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import {
-  AlertCircle, ArrowLeft, ArrowRight, BadgeCheck, Check, CheckCircle2, ChevronDown, Eye, EyeOff,
+  AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown, Eye, EyeOff,
   GraduationCap, KeyRound, Loader2, Lock, LogIn, Mail, MailCheck, Phone, Search, ShieldCheck,
   Sparkles, User as UserIcon, UserPlus, type LucideIcon,
 } from "lucide-react";
@@ -13,6 +13,7 @@ import { programImage } from "@/lib/programImages";
 import { cn } from "@/lib/utils";
 import { INPUT_CLASS, newPasswordErrors } from "@/lib/forms";
 import { VerificationPortal } from "./CertificateVerification";
+import { resolveIcon } from "./home/icons";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -207,24 +208,16 @@ function Stepper({ step, steps }: { step: number; steps: string[] }) {
 function Showcase() {
   const { state } = useApp();
   const w = state.websiteSettings;
-  const image = w.heroSlides[0]?.image || "/programs/default.webp";
-  const testimonial = w.testimonials[0];
-  const stats = [
-    { label: "Programmes", value: state.programs.length || "30+" },
-    {
-      label: "Graduates placed",
-      value: w.stats.find((s) => /graduate/i.test(s.label))?.value ?? "400+",
-    },
-    {
-      label: "Completion rate",
-      value: w.stats.find((s) => /completion/i.test(s.label))?.value ?? "96%",
-    },
-  ];
-  const features: [LucideIcon, string, string][] = [
-    [BadgeCheck, "Verifiable certificates", "QR-ready credentials employers confirm in seconds."],
-    [Sparkles, "Track your progress", "Assignments, grades, attendance and fees in one place."],
-    [ShieldCheck, "Secure by design", "Encrypted sessions and registrar-approved access."],
-  ];
+  const auth = w.auth;
+  const image = auth.showcaseImage || w.heroSlides[0]?.image || "/programs/default.webp";
+  const testimonial = auth.testimonial;
+  const stats = auth.stats.length
+    ? auth.stats
+    : [
+        { id: "s1", label: "Programmes", value: String(state.programs.length || "30+") },
+        { id: "s2", label: "Graduates placed", value: "400+" },
+        { id: "s3", label: "Completion rate", value: "96%" },
+      ];
 
   return (
     <aside className="relative hidden overflow-hidden lg:block">
@@ -242,38 +235,48 @@ function Showcase() {
         </div>
 
         <div className="max-w-lg">
-          <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-amber-300 ring-1 ring-white/15 backdrop-blur">
-            <Sparkles className="h-3.5 w-3.5" /> Student and staff portal
-          </p>
+          {auth.eyebrow && (
+            <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-amber-300 ring-1 ring-white/15 backdrop-blur">
+              <Sparkles className="h-3.5 w-3.5" /> {auth.eyebrow}
+            </p>
+          )}
           <h1 className="mt-5 text-4xl font-semibold leading-[1.15] tracking-tight xl:text-[2.75rem]">
-            Certificates that open doors.{" "}
-            <span className="text-amber-400">Skills that build communities.</span>
+            {auth.headline}{auth.headline && auth.highlight ? " " : ""}
+            {auth.highlight && <span className="text-amber-400">{auth.highlight}</span>}
           </h1>
-          <ul className="mt-8 space-y-4">
-            {features.map(([Icon, title, text]) => (
-              <li key={title} className="flex items-start gap-3.5">
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 ring-1 ring-white/15">
-                  <Icon className="h-5 w-5 text-amber-400" />
-                </span>
-                <span>
-                  <span className="block text-sm font-semibold">{title}</span>
-                  <span className="block text-sm text-emerald-100/80">{text}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
+          {auth.description && <p className="mt-3 text-sm text-emerald-100/85">{auth.description}</p>}
+          {auth.features.length > 0 && (
+            <ul className="mt-8 space-y-4">
+              {auth.features.map((f) => {
+                const Icon = resolveIcon(f.icon);
+                return (
+                  <li key={f.id} className="flex items-start gap-3.5">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 ring-1 ring-white/15">
+                      <Icon className="h-5 w-5 text-amber-400" />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-semibold">{f.title}</span>
+                      <span className="block text-sm text-emerald-100/80">{f.description}</span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
 
         <div className="space-y-5">
-          <div className="grid grid-cols-3 gap-3">
-            {stats.map((s) => (
-              <div key={s.label} className="rounded-2xl bg-white/10 p-4 ring-1 ring-white/10 backdrop-blur">
-                <p className="text-2xl font-semibold text-amber-400">{s.value}</p>
-                <p className="mt-0.5 text-xs text-emerald-100/80">{s.label}</p>
-              </div>
-            ))}
-          </div>
-          {testimonial && (
+          {stats.length > 0 && (
+            <div className="grid grid-cols-3 gap-3">
+              {stats.map((s) => (
+                <div key={s.id} className="rounded-2xl bg-white/10 p-4 ring-1 ring-white/10 backdrop-blur">
+                  <p className="text-2xl font-semibold text-amber-400">{s.value}</p>
+                  <p className="mt-0.5 text-xs text-emerald-100/80">{s.label}</p>
+                </div>
+              ))}
+            </div>
+          )}
+          {testimonial?.quote && (
             <figure className="rounded-2xl bg-white/10 p-5 ring-1 ring-white/10 backdrop-blur">
               <blockquote className="text-sm leading-relaxed text-emerald-50">“{testimonial.quote}”</blockquote>
               <figcaption className="mt-3 text-xs text-emerald-200">
@@ -668,7 +671,8 @@ function RegisterForm({ onDone }: { onDone: (email: string, status: DoneStatus) 
               <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-slate-200 p-3">
                 <Checkbox checked={reg.agree} onCheckedChange={(v) => set("agree", v === true)} className="mt-0.5" />
                 <span className="text-sm text-slate-600">
-                  I confirm my details are accurate and agree that the registrar may contact me about my application.
+                  {state.websiteSettings.auth.consentText ||
+                    "I confirm my details are accurate and agree that the registrar may contact me about my application."}
                 </span>
               </label>
               {errors.agree && (
@@ -840,14 +844,15 @@ export default function AuthPortal({
   // Email address awaiting confirmation after a successful registration.
   const [done, setDone] = useState<string | null>(null);
 
+  const auth = state.websiteSettings.auth;
   const heading =
-    done ? "Confirm your email" : tab === "signin" ? "Welcome back" : "Create your account";
+    done ? "Confirm your email" : tab === "signin" ? (auth.signinTitle || "Welcome back") : (auth.registerTitle || "Create your account");
   const sub = done
     ? ""
     : tab === "signin"
-      ? "Sign in to manage your courses, grades and certificates."
+      ? (auth.signinSubtitle || "Sign in to manage your courses, grades and certificates.")
       : registrationOpen
-        ? "Apply in three quick steps. The registrar reviews every application."
+        ? (auth.registerSubtitle || "Apply in three quick steps. The registrar reviews every application.")
         : "Self-registration is currently closed. Please contact the admissions office.";
 
   return (

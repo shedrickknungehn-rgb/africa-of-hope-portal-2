@@ -4,6 +4,7 @@ import {
   Percent, RefreshCw, Save, ShieldCheck, Trash2, Undo2, Upload, Users,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
+import { usePermission } from "../hooks/usePermission";
 import type { AppState, SystemSettings } from "../types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,7 +77,7 @@ function NumberField({
 
 export default function AdminSystemSettings() {
   const {
-    state, currentUser, updateSystemSettings, clearTransactionalData, importSystemData, resetDemoData,
+    state, updateSystemSettings, clearTransactionalData, importSystemData, resetDemoData,
   } = useApp();
 
   const [draft, setDraft] = useState<SystemSettings>(state.settings);
@@ -87,8 +88,7 @@ export default function AdminSystemSettings() {
     setDraft(state.settings);
   }, [state.settings]);
 
-  const canManage =
-    currentUser?.role === "Super Admin" || currentUser?.role === "School Admin";
+  const canManage = usePermission("settings.manage");
 
   if (!canManage) {
     return (
@@ -288,6 +288,12 @@ export default function AdminSystemSettings() {
                 suffix="%"
               />
             </div>
+            <ToggleRow
+              title="Hope Assistant enabled"
+              hint="Turn off to hide the AI assistant everywhere (public site and portal) and return a friendly unavailable message."
+              checked={draft.assistantEnabled}
+              onChange={(v) => set("assistantEnabled", v)}
+            />
           </div>
         </TabsContent>
 

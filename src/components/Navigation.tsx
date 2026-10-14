@@ -1,13 +1,13 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
-  LayoutDashboard, Users, BookOpen, Boxes, Award, ShieldQuestion, Megaphone,
-  ClipboardCheck, NotebookPen, Banknote, Bell, Search, LogOut, Menu, X, ChevronDown,
-  GraduationCap, BadgeCheck, RefreshCw, Settings, Globe, UserCircle, type LucideIcon,
+  Bell, Search, LogOut, Menu, X, ChevronDown,
+  GraduationCap, BadgeCheck, RefreshCw, Globe, Megaphone, type LucideIcon,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { cn } from "@/lib/utils";
-import type { Role } from "../types";
+import { ROLES } from "../lib/permissions";
+import { useVisiblePortalViews, portalViewLabel } from "../portalViews";
 import UserAvatar from "./UserAvatar";
 
 export const panelClass =
@@ -130,58 +130,10 @@ function Crest({ size = 40 }: { size?: number }) {
   );
 }
 
-const ICONS: Record<string, LucideIcon> = {
-  dashboard: LayoutDashboard,
-  students: Users,
-  programs: BookOpen,
-  cohorts: Boxes,
-  certificates: Award,
-  verification: ShieldQuestion,
-  announcements: Megaphone,
-  attendance: ClipboardCheck,
-  assignments: NotebookPen,
-  fees: Banknote,
-  settings: Settings,
-  website: Globe,
-  profile: UserCircle,
-};
-
-const NAV: Record<"admin" | "teacher" | "student", [string, string][]> = {
-  admin: [
-    ["dashboard", "Dashboard"],
-    ["students", "Student Directory"],
-    ["programs", "Program Builder"],
-    ["cohorts", "Cohort Coordinator"],
-    ["fees", "Finance Ledger"],
-    ["certificates", "Certificates"],
-    ["verification", "Verification Hub"],
-    ["announcements", "Bulletin Board"],
-    ["website", "Website CMS"],
-    ["settings", "System Settings"],
-    ["profile", "My Profile"],
-  ],
-  teacher: [
-    ["dashboard", "My Workspace"],
-    ["attendance", "Attendance Sheet"],
-    ["assignments", "Gradebook"],
-    ["announcements", "Bulletin Board"],
-    ["profile", "My Profile"],
-  ],
-  student: [
-    ["dashboard", "My Portal"],
-    ["assignments", "Assignments"],
-    ["fees", "Fees & Receipts"],
-    ["certificates", "My Certificates"],
-    ["verification", "Verification Hub"],
-    ["announcements", "Bulletin Board"],
-    ["profile", "My Profile"],
-  ],
-};
-
-function navGroupFor(role: Role): "admin" | "teacher" | "student" {
-  if (role === "Student") return "student";
-  if (role === "Teacher") return "teacher";
-  return "admin";
+function sidebarGroupLabel(role: string | null): string {
+  if (role === "Student") return "Student Desk";
+  if (role === "Teacher") return "Instructor";
+  return "Administration";
 }
 
 function Pop({
@@ -234,9 +186,7 @@ export default function Navigation({
   const { state, currentUser, login, logout, resetDemoData } = useApp();
   const [drawer, setDrawer] = useState(false);
   const [query, setQuery] = useState("");
-
-  const group = currentUser ? navGroupFor(currentUser.role) : "student";
-  const items = NAV[group];
+  const { ctx, views } = useVisiblePortalViews();
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -244,7 +194,7 @@ export default function Navigation({
     return state.users
       .filter((u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
       .slice(0, 4)
-      .map((u) => ({ id: u.id, label: u.name, sub: u.role, avatarUrl: u.avatarUrl, go: "students" }));
+      .map((u) => ({ id: u.id, label: u.name, sub: u.role, avatarUrl: u.avatarUrl, go: "people" }));
   }, [query, state.users]);
 
   const go = (v: string) => {
@@ -256,16 +206,18 @@ export default function Navigation({
   const sidebar = (
     <nav className="flex flex-col gap-1 p-3">
       <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-widest text-emerald-800/60">
-        {group === "admin" ? "Administration" : group === "teacher" ? "Instructor" : "Student Desk"}
+        {sidebarGroupLabel(ctx.role)}
       </p>
-      {items.map(([key, label]) => {
-        const Icon = ICONS[key];
-        const active = view === key;
+      {views.map((v) => {
+        const Icon = v.icon;
+        const label = portalViewLabel(v, ctx);
+        const active = view === v.key;
         return (
           <button
-            key={key}
+            key={v.key}
             type="button"
-            onClick={() => go(key)}
+            onClick={() => go(v.key)}
+            data-component-id={`nav-${v.key}`}
             className={cn(
               "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition",
               active
@@ -414,9 +366,7 @@ export default function Navigation({
                     Switch portal account
                   </p>
                   {state.users
-                    .filter((u) =>
-                      ["Super Admin", "School Admin", "Teacher", "Student"].includes(u.role),
-                    )
+                    .filter((u) => (ROLES as string[]).includes(u.role))
                     .slice(0, 12)
                     .map((u) => (
                       <button
