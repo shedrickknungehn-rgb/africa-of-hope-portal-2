@@ -342,7 +342,7 @@ function SignInForm({
         type="email"
         autoComplete="email"
         value={email}
-        onChange={setEmail}
+        onChange={(v) => { setEmail(v); setErrors((e) => (e.email || e.form ? { ...e, email: undefined, form: undefined } : e)); }}
         placeholder="you@africaofhope.org"
         error={errors.email}
         autoFocus
@@ -353,7 +353,7 @@ function SignInForm({
         type="password"
         autoComplete="current-password"
         value={password}
-        onChange={setPassword}
+        onChange={(v) => { setPassword(v); setErrors((e) => (e.password || e.form ? { ...e, password: undefined, form: undefined } : e)); }}
         placeholder="Enter your password"
         error={errors.password}
         labelAction={
@@ -439,8 +439,18 @@ function RegisterForm({ onDone }: { onDone: (email: string, status: DoneStatus) 
   const [errors, setErrors] = useState<RegErrors>({});
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
-  const set = <K extends keyof typeof emptyReg>(key: K, v: (typeof emptyReg)[K]) =>
+  const set = <K extends keyof typeof emptyReg>(key: K, v: (typeof emptyReg)[K]) => {
     setReg((r) => ({ ...r, [key]: v }));
+    // Clear this field's stale error (and any password-mismatch error it affects) as the
+    // user edits it, so e.g. the live strength meter is not hidden behind an old message.
+    setErrors((e) => {
+      if (!e[key] && !(key === "password" && e.confirm)) return e;
+      const next = { ...e };
+      delete next[key];
+      if (key === "password") delete next.confirm;
+      return next;
+    });
+  };
 
   const programs = useMemo(() => {
     const q = query.trim().toLowerCase();
