@@ -3,11 +3,12 @@ import { motion, useReducedMotion } from "framer-motion";
 import {
   LayoutDashboard, Users, BookOpen, Boxes, Award, ShieldQuestion, Megaphone,
   ClipboardCheck, NotebookPen, Banknote, Bell, Search, LogOut, Menu, X, ChevronDown,
-  GraduationCap, BadgeCheck, RefreshCw, Settings, Globe, type LucideIcon,
+  GraduationCap, BadgeCheck, RefreshCw, Settings, Globe, UserCircle, type LucideIcon,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { cn } from "@/lib/utils";
 import type { Role } from "../types";
+import UserAvatar from "./UserAvatar";
 
 export const panelClass =
   "rounded-2xl border border-emerald-900/10 bg-white shadow-sm shadow-emerald-900/5";
@@ -129,15 +130,6 @@ function Crest({ size = 40 }: { size?: number }) {
   );
 }
 
-function initials(name: string): string {
-  return name
-    .split(" ")
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-}
-
 const ICONS: Record<string, LucideIcon> = {
   dashboard: LayoutDashboard,
   students: Users,
@@ -151,6 +143,7 @@ const ICONS: Record<string, LucideIcon> = {
   fees: Banknote,
   settings: Settings,
   website: Globe,
+  profile: UserCircle,
 };
 
 const NAV: Record<"admin" | "teacher" | "student", [string, string][]> = {
@@ -165,12 +158,14 @@ const NAV: Record<"admin" | "teacher" | "student", [string, string][]> = {
     ["announcements", "Bulletin Board"],
     ["website", "Website CMS"],
     ["settings", "System Settings"],
+    ["profile", "My Profile"],
   ],
   teacher: [
     ["dashboard", "My Workspace"],
     ["attendance", "Attendance Sheet"],
     ["assignments", "Gradebook"],
     ["announcements", "Bulletin Board"],
+    ["profile", "My Profile"],
   ],
   student: [
     ["dashboard", "My Portal"],
@@ -179,6 +174,7 @@ const NAV: Record<"admin" | "teacher" | "student", [string, string][]> = {
     ["certificates", "My Certificates"],
     ["verification", "Verification Hub"],
     ["announcements", "Bulletin Board"],
+    ["profile", "My Profile"],
   ],
 };
 
@@ -248,7 +244,7 @@ export default function Navigation({
     return state.users
       .filter((u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
       .slice(0, 4)
-      .map((u) => ({ id: u.id, label: u.name, sub: u.role, go: "students" }));
+      .map((u) => ({ id: u.id, label: u.name, sub: u.role, avatarUrl: u.avatarUrl, go: "students" }));
   }, [query, state.users]);
 
   const go = (v: string) => {
@@ -347,9 +343,7 @@ export default function Navigation({
                     onClick={() => go(r.go)}
                     className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left hover:bg-emerald-50"
                   >
-                    <span className="grid h-8 w-8 place-items-center rounded-full bg-emerald-800 text-[11px] font-semibold text-amber-400">
-                      {initials(r.label)}
-                    </span>
+                    <UserAvatar user={{ name: r.label, avatarUrl: r.avatarUrl }} className="h-8 w-8 text-[11px]" />
                     <span>
                       <span className="block text-sm font-medium text-slate-800">{r.label}</span>
                       <span className="block text-[11px] text-slate-500">{r.sub}</span>
@@ -429,7 +423,7 @@ export default function Navigation({
                         key={u.id}
                         type="button"
                         onClick={() => {
-                          login(u.id);
+                          void login(u.id);
                           close();
                           go("dashboard");
                         }}
@@ -438,9 +432,7 @@ export default function Navigation({
                           u.id === currentUser?.id && "bg-emerald-50",
                         )}
                       >
-                        <span className="grid h-8 w-8 place-items-center rounded-full bg-emerald-800 text-[11px] font-semibold text-amber-400">
-                          {initials(u.name)}
-                        </span>
+                        <UserAvatar user={u} className="h-8 w-8 text-[11px]" />
                         <span className="min-w-0">
                           <span className="block truncate text-sm font-medium text-slate-800">
                             {u.name}
@@ -455,17 +447,28 @@ export default function Navigation({
               )}
             </Pop>
 
-            <div className="hidden items-center gap-2 border-l border-slate-200 pl-2 sm:flex">
-              <span className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-emerald-700 to-emerald-950 text-xs font-semibold text-amber-400">
-                {currentUser ? initials(currentUser.name) : "AO"}
-              </span>
+            <button
+              type="button"
+              onClick={() => go("profile")}
+              title="My profile"
+              aria-label="Open my profile"
+              className={cn(
+                "hidden items-center gap-2 rounded-xl border-l border-slate-200 py-1 pl-2 pr-2 text-left transition hover:bg-emerald-50 sm:flex",
+                view === "profile" && "bg-emerald-50",
+              )}
+            >
+              {currentUser ? (
+                <UserAvatar user={currentUser} className="h-9 w-9 text-xs ring-2 ring-emerald-700/10" />
+              ) : (
+                <span className="grid h-9 w-9 place-items-center rounded-full bg-emerald-800 text-xs font-semibold text-amber-400">AO</span>
+              )}
               <span className="hidden leading-tight lg:block">
                 <span className="block max-w-[140px] truncate text-sm font-medium text-slate-800">
                   {currentUser?.name}
                 </span>
-                <span className="block text-[11px] text-slate-500">{currentUser?.title ?? currentUser?.email}</span>
+                <span className="block max-w-[140px] truncate text-[11px] text-slate-500">{currentUser?.title ?? currentUser?.email}</span>
               </span>
-            </div>
+            </button>
 
             <button
               type="button"

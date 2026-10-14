@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import { EmptyState, Reveal, SectionHeader, StatCard, panelClass } from "./Navigation";
 import { cn } from "@/lib/utils";
+import ProgramCover from "./ProgramCover";
 
 const TH =
   "px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500";
@@ -396,34 +397,37 @@ export function ProgramBuilder() {
       />
       <div className="grid gap-4 md:grid-cols-2">
         {state.programs.map((p) => (
-          <Reveal key={p.id} className={cn(panelClass, "flex flex-col p-5")}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-base font-semibold text-slate-900">{p.title}</h3>
-                <Badge variant="secondary" className="mt-1.5 bg-emerald-50 text-emerald-800">{p.category}</Badge>
-              </div>
-              <div className="text-right">
-                <p className="text-lg font-semibold text-emerald-800">{formatCurrency(p.tuition)}</p>
-                <p className="text-[11px] text-slate-500">{p.durationWeeks} weeks</p>
-              </div>
-            </div>
-            <p className="mt-3 text-sm text-slate-600">{p.description}</p>
-            <div className="mt-4 space-y-2 border-t border-slate-100 pt-3">
-              {p.modules.map((m) => (
-                <div key={m.id} className="flex items-start gap-3 text-sm">
-                  <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-emerald-800/10 text-[11px] font-semibold text-emerald-800">
-                    {m.weeks}w
-                  </span>
-                  <span>
-                    <span className="block font-medium text-slate-800">{m.title}</span>
-                    <span className="block text-xs text-slate-500">{m.summary}</span>
-                  </span>
+          <Reveal key={p.id} className={cn(panelClass, "flex flex-col overflow-hidden")}>
+            <ProgramCover program={p} editable className="h-44" />
+            <div className="flex flex-1 flex-col p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-900">{p.title}</h3>
+                  <Badge variant="secondary" className="mt-1.5 bg-emerald-50 text-emerald-800">{p.category}</Badge>
                 </div>
-              ))}
+                <div className="text-right">
+                  <p className="text-lg font-semibold text-emerald-800">{formatCurrency(p.tuition)}</p>
+                  <p className="text-[11px] text-slate-500">{p.durationWeeks} weeks</p>
+                </div>
+              </div>
+              <p className="mt-3 text-sm text-slate-600">{p.description}</p>
+              <div className="mt-4 space-y-2 border-t border-slate-100 pt-3">
+                {p.modules.map((m) => (
+                  <div key={m.id} className="flex items-start gap-3 text-sm">
+                    <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-emerald-800/10 text-[11px] font-semibold text-emerald-800">
+                      {m.weeks}w
+                    </span>
+                    <span>
+                      <span className="block font-medium text-slate-800">{m.title}</span>
+                      <span className="block text-xs text-slate-500">{m.summary}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-4 flex items-center gap-2 text-xs text-slate-500">
+                <GraduationCap className="h-4 w-4 text-amber-500" /> {p.certification}
+              </p>
             </div>
-            <p className="mt-4 flex items-center gap-2 text-xs text-slate-500">
-              <GraduationCap className="h-4 w-4 text-amber-500" /> {p.certification}
-            </p>
           </Reveal>
         ))}
       </div>

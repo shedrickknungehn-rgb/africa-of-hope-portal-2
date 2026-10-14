@@ -18,6 +18,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { EmptyState, Reveal, SectionHeader, StatCard, panelClass } from "./Navigation";
+import ProgramCover from "./ProgramCover";
 import { cn } from "@/lib/utils";
 
 const FEE_CATEGORIES: FeeCategory[] = ["Registration", "Tuition", "Exam", "Certificate"];
@@ -120,7 +121,8 @@ export function StudentPortal() {
         </Reveal>
       </div>
 
-      <Reveal delay={0.1} className={cn(panelClass, "p-5")}>
+      <Reveal delay={0.1} className={cn(panelClass, "overflow-hidden p-5")}>
+        {program && <ProgramCover program={program} className="-mx-5 -mt-5 mb-5 h-40 sm:h-48" />}
         <SectionHeader title="Curriculum outline" subtitle={program?.title ?? "Program"} />
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {(program?.modules ?? []).map((m) => (
