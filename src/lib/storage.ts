@@ -58,9 +58,12 @@ function safeName(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/-+/g, "-").slice(0, 80) || "file";
 }
 
-/** Supabase storage errors for a missing bucket read "Bucket not found". */
+/**
+ * A missing bucket ("Bucket not found") or missing upload policies
+ * ("row-level security") both mean the storage migration has not run yet.
+ */
 function explain(message: string): string {
-  return /bucket not found/i.test(message)
+  return /bucket not found|row-level security/i.test(message)
     ? "File storage is not set up yet. Ask an administrator to apply the latest database migration."
     : message;
 }
