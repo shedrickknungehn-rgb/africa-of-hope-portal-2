@@ -180,9 +180,15 @@ export const defaultWebsiteSettings: WebsiteSettings = {
     showApply: true,
   },
   home: {
-    order: ["about", "features", "impact", "admissions", "verify", "faq", "contact", "cta"],
+    order: ["summary", "about", "features", "impact", "admissions", "verify", "faq", "contact", "cta"],
     hidden: [],
     sections: {
+      summary: {
+        eyebrow: "Who we are",
+        title: "",
+        subtitle: "",
+        body: "",
+      },
       about: {
         eyebrow: "Our mission",
         title: "African excellence, delivered as practical skill.",

@@ -16,6 +16,9 @@ import {
   UserCircle,
   FileQuestion,
   CalendarRange,
+  Newspaper,
+  Smartphone,
+  Mail,
   type LucideIcon,
 } from "lucide-react";
 import { useApp } from "./context/AppContext";
@@ -45,6 +48,10 @@ import QuizBuilder from "./components/quiz/QuizBuilder";
 import StudentQuizzes from "./components/quiz/StudentQuizzes";
 import AcademicPlanning from "./components/AcademicPlanning";
 import AnnouncementManager from "./components/AnnouncementManager";
+import BlogManager from "./components/portal/BlogManager";
+import StudentPayments from "./components/portal/StudentPayments";
+import PaymentsReview from "./components/portal/PaymentsReview";
+import EmailOutboxPanel from "./components/portal/EmailOutboxPanel";
 
 /** Everything a view's `visible`/`render` function needs, computed once per render. */
 export interface PortalViewContext extends PermissionsApi {
@@ -160,6 +167,20 @@ export const PORTAL_VIEWS: PortalView[] = [
     render: () => <FeeRegister />,
   },
   {
+    key: "payments",
+    label: "Pay fees",
+    icon: Smartphone,
+    visible: (ctx) => ctx.can("payments.submit") && !ctx.can("payments.confirm"),
+    render: () => <StudentPayments />,
+  },
+  {
+    key: "payment-review",
+    label: "Payment confirmations",
+    icon: ClipboardCheck,
+    visible: (ctx) => ctx.can("payments.confirm"),
+    render: () => <PaymentsReview />,
+  },
+  {
     key: "certificates",
     label: (ctx) => (ctx.role === "Student" ? "My Certificates" : "Certificates"),
     icon: Award,
@@ -181,6 +202,13 @@ export const PORTAL_VIEWS: PortalView[] = [
     render: () => <AnnouncementManager />,
   },
   {
+    key: "blog",
+    label: "Blog",
+    icon: Newspaper,
+    visible: (ctx) => ctx.can("blog.manage"),
+    render: () => <BlogManager />,
+  },
+  {
     key: "website",
     label: "Website CMS",
     icon: Globe,
@@ -193,6 +221,13 @@ export const PORTAL_VIEWS: PortalView[] = [
     icon: Settings,
     visible: (ctx) => ctx.can("settings.manage"),
     render: () => <AdminSystemSettings />,
+  },
+  {
+    key: "email-outbox",
+    label: "Email delivery",
+    icon: Mail,
+    visible: (ctx) => ctx.can("settings.manage"),
+    render: () => <EmailOutboxPanel />,
   },
   {
     key: "profile",

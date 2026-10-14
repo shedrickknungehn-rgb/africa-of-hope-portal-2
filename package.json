@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "PORT=3000 vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
-    "test": "tsc --noEmit -p tsconfig.tests.json && node --test tests/academicApi.test.ts",
+    "test": "tsc --noEmit -p tsconfig.tests.json && node --test tests/academicApi.test.ts tests/blogApi.test.ts tests/paymentsApi.test.ts",
     "test:academic:db": "bash supabase/tests/run-academic-contract.sh",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

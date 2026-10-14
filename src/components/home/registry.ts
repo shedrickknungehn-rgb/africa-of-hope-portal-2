@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import type { HomeSectionKey } from "@/types";
+import InstitutionSummarySection from "./InstitutionSummarySection";
 import AboutSection from "./AboutSection";
 import FeaturesSection from "./FeaturesSection";
 import ImpactSection from "./ImpactSection";
@@ -18,6 +19,7 @@ import CtaBand from "./CtaBand";
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const HOME_SECTION_REGISTRY: Record<HomeSectionKey, ComponentType<any>> = {
+  summary: InstitutionSummarySection,
   about: AboutSection,
   features: FeaturesSection,
   impact: ImpactSection,

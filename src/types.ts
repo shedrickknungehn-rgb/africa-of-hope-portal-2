@@ -200,6 +200,7 @@ export interface StepItem {
 }
 
 export type HomeSectionKey =
+  | "summary"
   | "about"
   | "features"
   | "impact"

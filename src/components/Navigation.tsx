@@ -2,13 +2,14 @@ import { useMemo, useState, type ReactNode } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   Bell, Search, LogOut, Menu, X, ChevronDown,
-  GraduationCap, BadgeCheck, RefreshCw, Globe, Megaphone, type LucideIcon,
+  BadgeCheck, RefreshCw, Globe, Megaphone, type LucideIcon,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { cn } from "@/lib/utils";
 import { ROLES } from "../lib/permissions";
 import { useVisiblePortalViews, portalViewLabel } from "../portalViews";
 import UserAvatar from "./UserAvatar";
+import BrandLockup from "./brand/BrandLockup";
 
 export const panelClass =
   "rounded-2xl border border-emerald-900/10 bg-white shadow-sm shadow-emerald-900/5";
@@ -116,19 +117,6 @@ export function EmptyState({
   );
 }
 
-function Crest({ size = 40 }: { size?: number }) {
-  return (
-    <span
-      className="relative grid shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-700 to-emerald-950 ring-1 ring-amber-400/50"
-      style={{ width: size, height: size }}
-    >
-      <GraduationCap className="text-amber-400" style={{ width: size * 0.5, height: size * 0.5 }} />
-      <span className="absolute -bottom-1 -right-1 grid h-4 w-4 place-items-center rounded-full bg-amber-400 text-[8px] font-bold text-emerald-950">
-        H
-      </span>
-    </span>
-  );
-}
 
 function sidebarGroupLabel(role: string | null): string {
   if (role === "Student") return "Student Desk";
@@ -267,15 +255,13 @@ export default function Navigation({
           </button>
 
           <div className="flex items-center gap-3">
-            <Crest />
-            <div className="leading-tight">
-              <p className="text-sm font-bold uppercase tracking-[0.18em] text-emerald-900">
-                {state.settings.academyName}
-              </p>
-              <p className="hidden text-[11px] text-slate-500 sm:block">
-                Institutional Training Academy
-              </p>
-            </div>
+            <BrandLockup
+              logoUrl={state.websiteSettings.logoUrl}
+              academyName={state.websiteSettings.academyName || state.settings.academyName}
+              tagline={state.websiteSettings.tagline || "Institutional Training Academy"}
+              tone="light"
+              size="md"
+            />
           </div>
 
           <div className="relative ml-auto hidden md:block">
@@ -454,10 +440,13 @@ export default function Navigation({
           <div className="absolute left-0 top-0 h-full w-72 bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-100 p-4">
               <div className="flex items-center gap-2">
-                <Crest size={32} />
-                <span className="text-sm font-bold uppercase tracking-widest text-emerald-900">
-                  {state.settings.academyName}
-                </span>
+                <BrandLockup
+                  logoUrl={state.websiteSettings.logoUrl}
+                  academyName={state.websiteSettings.academyName || state.settings.academyName}
+                  tone="light"
+                  size="sm"
+                  showTagline={false}
+                />
               </div>
               <button
                 type="button"

@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import {
   AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown, Eye, EyeOff,
-  GraduationCap, KeyRound, Loader2, Lock, LogIn, Mail, MailCheck, Phone, Search, ShieldCheck,
+  KeyRound, Loader2, Lock, LogIn, Mail, MailCheck, Phone, Search, ShieldCheck,
   Sparkles, User as UserIcon, UserPlus, type LucideIcon,
 } from "lucide-react";
 import { OPENED_FROM_RECOVERY_LINK, supabase } from "@/integrations/supabase/client";
@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { INPUT_CLASS, newPasswordErrors } from "@/lib/forms";
 import { VerificationPortal } from "./CertificateVerification";
 import { resolveIcon } from "./home/icons";
+import BrandLockup from "./brand/BrandLockup";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -28,17 +29,6 @@ const PRIMARY =
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // ── Small building blocks ─────────────────────────────────────────────────────
-
-function CrestMark({ size = 44 }: { size?: number }) {
-  return (
-    <span
-      className="relative grid shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-950 ring-1 ring-amber-400/60"
-      style={{ width: size, height: size }}
-    >
-      <GraduationCap className="text-amber-400" style={{ width: size * 0.5, height: size * 0.5 }} />
-    </span>
-  );
-}
 
 interface FieldProps {
   label: string;
@@ -227,11 +217,13 @@ function Showcase() {
 
       <div className="relative flex h-full flex-col justify-between gap-10 p-10 text-white xl:p-14">
         <div className="flex items-center gap-3">
-          <CrestMark />
-          <div className="leading-tight">
-            <p className="text-sm font-bold uppercase tracking-[0.2em]">{w.academyName || state.settings.academyName}</p>
-            <p className="text-xs text-emerald-200">{w.tagline || "Institutional Training Academy"}</p>
-          </div>
+          <BrandLockup
+            logoUrl={w.logoUrl}
+            academyName={w.academyName || state.settings.academyName}
+            tagline={w.tagline || "Institutional Training Academy"}
+            tone="dark"
+            size="md"
+          />
         </div>
 
         <div className="max-w-lg">
@@ -871,10 +863,13 @@ export default function AuthPortal({
             </button>
           ) : <span />}
           <div className="flex items-center gap-2 lg:hidden">
-            <CrestMark size={34} />
-            <span className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-900">
-              {state.websiteSettings.academyName || state.settings.academyName}
-            </span>
+            <BrandLockup
+              logoUrl={state.websiteSettings.logoUrl}
+              academyName={state.websiteSettings.academyName || state.settings.academyName}
+              tone="light"
+              size="sm"
+              showTagline={false}
+            />
           </div>
         </div>
 
