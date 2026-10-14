@@ -90,53 +90,56 @@ export default function HopeAssistant() {
 
   return (
     <>
+      {/* Launcher and panel are sized at ~70% (30% smaller) of the original
+          dimensions — width/height/padding/icons scale down together, but no
+          text drops below 12px (text-xs) so copy stays readable. */}
       {!open && (
         <button
           type="button"
           onClick={() => setOpen(true)}
           aria-label={label}
           className={cn(
-            "fixed z-40 flex items-center gap-2.5 rounded-full bg-[#022c22] text-sm font-bold text-white shadow-2xl shadow-emerald-950/30 transition hover:brightness-110",
+            "fixed z-40 flex items-center gap-2 rounded-full bg-[#022c22] text-xs font-bold text-white shadow-2xl shadow-emerald-950/30 transition hover:brightness-110",
             surface === "portal"
-              ? "bottom-4 left-4 h-11 w-11 justify-center p-0 lg:w-56 lg:justify-start lg:px-4"
-              : "bottom-5 right-5 px-5 py-3.5 max-sm:top-24 max-sm:right-3 max-sm:bottom-auto max-sm:h-10 max-sm:w-10 max-sm:justify-center max-sm:p-0",
+              ? "bottom-4 left-4 h-8 w-8 justify-center p-0 lg:w-[157px] lg:justify-start lg:px-[11px]"
+              : "bottom-5 right-5 px-[14px] py-[10px] max-sm:top-24 max-sm:right-3 max-sm:bottom-auto max-sm:h-7 max-sm:w-7 max-sm:justify-center max-sm:p-0",
           )}
         >
-          <span className="grid h-9 w-9 place-items-center rounded-full bg-amber-400 text-[#022c22] max-sm:h-7 max-sm:w-7">
-            <Sparkles className="h-4.5 w-4.5" />
+          <span className="grid h-[25px] w-[25px] place-items-center rounded-full bg-amber-400 text-[#022c22] max-sm:h-5 max-sm:w-5">
+            <Sparkles className="h-[13px] w-[13px]" />
           </span>
           <span className={surface === "portal" ? "sr-only lg:not-sr-only" : "max-sm:sr-only"}>{label}</span>
         </button>
       )}
 
       {open && (
-        <div className="fixed bottom-5 right-5 z-40 flex h-[600px] w-[380px] max-w-[92vw] flex-col overflow-hidden rounded-2xl border border-emerald-900/10 bg-white shadow-2xl">
-          <div className="flex items-center gap-3 bg-gradient-to-br from-emerald-900 to-[#022c22] p-4 text-white">
-            <span className="relative grid h-10 w-10 flex-shrink-0 place-items-center rounded-xl bg-amber-400 text-[#022c22]">
-              <Bot className="h-5 w-5" />
-              <span className="absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full bg-emerald-400 ring-2 ring-[#022c22]" />
+        <div className="fixed bottom-5 right-5 z-40 flex h-[420px] w-[266px] max-w-[92vw] flex-col overflow-hidden rounded-2xl border border-emerald-900/10 bg-white shadow-2xl">
+          <div className="flex items-center gap-2 bg-gradient-to-br from-emerald-900 to-[#022c22] p-[11px] text-white">
+            <span className="relative grid h-7 w-7 flex-shrink-0 place-items-center rounded-xl bg-amber-400 text-[#022c22]">
+              <Bot className="h-[14px] w-[14px]" />
+              <span className="absolute -right-0.5 -bottom-0.5 h-[7px] w-[7px] rounded-full bg-emerald-400 ring-1 ring-[#022c22]" />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-bold">{label}</p>
+              <p className="truncate text-xs font-bold">{label}</p>
               <p className="truncate text-xs text-emerald-200">Africa of Hope Academy assistant</p>
             </div>
-            <button type="button" onClick={() => setOpen(false)} className="rounded-lg p-1.5 text-emerald-100 hover:bg-white/10">
-              <X className="h-4 w-4" />
+            <button type="button" onClick={() => setOpen(false)} className="rounded-lg p-1 text-emerald-100 hover:bg-white/10">
+              <X className="h-[11px] w-[11px]" />
             </button>
           </div>
 
-          <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
+          <div ref={scrollRef} className="flex-1 space-y-2 overflow-y-auto p-[11px]">
             {bubbles.length === 0 && (
-              <div className="space-y-3">
-                <p className="text-sm text-slate-600">
+              <div className="space-y-2">
+                <p className="text-xs text-slate-600">
                   Hi{currentUser ? ` ${currentUser.name.split(" ")[0]}` : ""}! I'm {label}. Ask me about programmes,
                   admissions, {currentUser ? "your fees, quizzes, " : ""}certificate verification, or how to use the portal.
                 </p>
-                <div className="ml-1 flex flex-wrap gap-1.5">
+                <div className="ml-1 flex flex-wrap gap-1">
                   {suggestionsFor(currentUser?.role ?? null).map((s) => (
                     <button
                       key={s} type="button" onClick={() => send(s)}
-                      className="rounded-full border border-emerald-600/25 bg-white px-3 py-1.5 text-left text-xs font-semibold text-emerald-800 hover:bg-emerald-50"
+                      className="rounded-full border border-emerald-600/25 bg-white px-2 py-1 text-left text-xs font-semibold text-emerald-800 hover:bg-emerald-50"
                     >
                       {s}
                     </button>
@@ -148,11 +151,11 @@ export default function HopeAssistant() {
             {bubbles.map((b) => (
               <div key={b.id} className={cn("flex", b.role === "user" ? "justify-end" : "justify-start")}>
                 {b.role === "error" ? (
-                  <p className="max-w-[85%] rounded-xl bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{b.content}</p>
+                  <p className="max-w-[85%] rounded-xl bg-rose-50 px-[10px] py-[7px] text-xs text-rose-700">{b.content}</p>
                 ) : (
                   <div
                     className={cn(
-                      "max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed",
+                      "max-w-[85%] rounded-xl px-[10px] py-[7px] text-xs leading-relaxed",
                       b.role === "user" ? "bg-emerald-700 text-white" : "bg-slate-100 text-slate-800",
                     )}
                   >
@@ -162,9 +165,9 @@ export default function HopeAssistant() {
                       </div>
                     ) : (
                       <span className="inline-flex items-center gap-1 py-1">
-                        <i className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-                        <i className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500 [animation-delay:150ms]" />
-                        <i className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500 [animation-delay:300ms]" />
+                        <i className="h-1 w-1 animate-pulse rounded-full bg-emerald-500" />
+                        <i className="h-1 w-1 animate-pulse rounded-full bg-emerald-500 [animation-delay:150ms]" />
+                        <i className="h-1 w-1 animate-pulse rounded-full bg-emerald-500 [animation-delay:300ms]" />
                       </span>
                     )}
                   </div>
@@ -174,23 +177,23 @@ export default function HopeAssistant() {
           </div>
 
           <form
-            className="border-t border-slate-100 p-3"
+            className="border-t border-slate-100 p-2"
             onSubmit={(e) => { e.preventDefault(); send(draft); }}
           >
-            <div className="flex items-center gap-2 rounded-2xl border border-slate-200 px-3.5 py-1.5">
+            <div className="flex items-center gap-2 rounded-2xl border border-slate-200 px-[10px] py-1">
               <input
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder="Ask Hope Assistant…"
                 maxLength={1500}
                 disabled={sending}
-                className="flex-1 bg-transparent py-2 text-sm outline-none disabled:opacity-60"
+                className="flex-1 bg-transparent py-1.5 text-xs outline-none disabled:opacity-60"
               />
-              <Button type="submit" size="icon" disabled={sending || !draft.trim()} className="h-9 w-9 rounded-xl bg-emerald-700 hover:bg-emerald-800">
-                <Send className="h-4 w-4" />
+              <Button type="submit" size="icon" disabled={sending || !draft.trim()} className="h-[25px] w-[25px] rounded-xl bg-emerald-700 hover:bg-emerald-800">
+                <Send className="h-[11px] w-[11px]" />
               </Button>
             </div>
-            <p className="mt-2 text-center text-[11px] text-slate-400">Hope Assistant can make mistakes. Confirm anything important with the office.</p>
+            <p className="mt-1.5 text-center text-xs text-slate-400">Hope Assistant can make mistakes. Confirm anything important with the office.</p>
           </form>
         </div>
       )}

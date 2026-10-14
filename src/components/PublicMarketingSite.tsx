@@ -1,64 +1,142 @@
-import { useEffect, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
-  GraduationCap, LogIn, Menu, X, Mail, Phone,
-  MapPin, Sparkles, Globe, ChevronRight,
-  Award, BookOpen, Clock3,
+  LogIn, Menu, X, Mail, Phone,
+  MapPin, Sparkles, Globe, ChevronRight, ArrowRight,
+  BookOpen, CalendarDays,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
-import { Button } from "@/components/ui/button";
 import type { AuthTab } from "./AuthPortal";
 import HeroSlider from "./HeroSlider";
 import { HOME_SECTION_REGISTRY } from "./home/registry";
 import Marquee from "./animata/container/marquee";
-import { programImage } from "@/lib/programImages";
+import BrandLockup from "./brand/BrandLockup";
+import ProgrammesPage from "./public/ProgrammesPage";
+import BlogListPage from "./public/BlogListPage";
+import BlogPostPage from "./public/BlogPostPage";
+import { ScrollReveal, StaggerGroup } from "./public/motion";
+import { buttonMotionProps, fadeUpVariants } from "./public/motionConstants";
+import { listPublishedPosts, readingTimeMinutes, type BlogPost } from "@/lib/blogPublic";
+import { format } from "date-fns";
+import type { HomeSectionKey } from "@/types";
 
 const NAV_LINKS: [string, string][] = [
-  ["#programs", "Programs"],
+  ["#home", "Home"],
   ["#about", "About"],
-  ["#impact", "Impact"],
+  ["#programmes", "Programmes"],
+  ["#blog", "Blog"],
   ["#verify", "Verify"],
   ["#admissions", "Admissions"],
 ];
 
-function programDuration(weeks: number) {
-  if (!weeks) return "Duration to be confirmed";
-  return `${weeks} ${weeks === 1 ? "week" : "weeks"}`;
+const PROGRAMMES_RE = /^#(programmes|programs)$/i;
+const HOME_RE = /^#(home)?$/i;
+const BLOG_RE = /^#blog$/i;
+
+type View =
+  | { type: "home"; anchor: string | null }
+  | { type: "programmes" }
+  | { type: "blog" }
+  | { type: "blogPost"; slug: string };
+
+function parseHash(hash: string): View {
+  const h = hash || "#home";
+  if (PROGRAMMES_RE.test(h)) return { type: "programmes" };
+  if (BLOG_RE.test(h)) return { type: "blog" };
+  if (/^#blog\//i.test(h)) return { type: "blogPost", slug: decodeURIComponent(h.replace(/^#blog\//i, "")) };
+  if (HOME_RE.test(h)) return { type: "home", anchor: null };
+  // Any other anchor (#about, #impact, #verify, #admissions, #contact, #summary…) stays on Home and scrolls there.
+  return { type: "home", anchor: h.replace(/^#/, "") };
 }
 
-function Crest({ logoUrl }: { logoUrl?: string }) {
-  if (logoUrl) {
-    return (
-      <img
-        src={logoUrl}
-        alt="Logo"
-        className="h-10 w-10 shrink-0 rounded-2xl object-cover ring-1 ring-amber-400/60"
-      />
-    );
+function formatDate(iso: string | null): string {
+  if (!iso) return "";
+  try {
+    return format(new Date(iso), "MMM d, yyyy");
+  } catch {
+    return "";
   }
-  return (
-    <span className="relative grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-950 ring-1 ring-amber-400/60">
-      <GraduationCap className="h-5 w-5 text-amber-400" />
-      <span className="absolute -bottom-1 -right-1 grid h-4 w-4 place-items-center rounded-full bg-amber-400 text-[8px] font-bold text-emerald-950">
-        H
-      </span>
-    </span>
-  );
 }
 
 export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: (tab?: AuthTab) => void }) {
   const { state } = useApp();
   const { settings, websiteSettings: w } = state;
   const saved = w.navLinks.length > 0 ? w.navLinks : NAV_LINKS.map(([href, label]) => ({ id: href, href, label }));
-  const navLinks = saved.some((link) => /^#programs?$/i.test(link.href.trim()))
-    ? saved
-    : [{ id: "nav-programs", href: "#programs", label: "Programs" }, ...saved];
+  const navLinks = useMemo(() => {
+    let links = saved;
+    if (!links.some((l) => HOME_RE.test(l.href.trim()) && l.href.trim() !== "#"))
+      links = [{ id: "nav-home", href: "#home", label: "Home" }, ...links];
+    if (!links.some((l) => PROGRAMMES_RE.test(l.href.trim())))
+      links = [...links, { id: "nav-programmes", href: "#programmes", label: "Programmes" }];
+    if (!links.some((l) => BLOG_RE.test(l.href.trim())))
+      links = [...links, { id: "nav-blog", href: "#blog", label: "Blog" }];
+    return links;
+  }, [saved]);
   const displayName = w.academyName || settings.academyName;
   const [menu, setMenu] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  const [hash, setHash] = useState(() => (typeof window !== "undefined" ? window.location.hash : "#home"));
+  const reduceMotion = useReducedMotion();
   const openApply = () => onEnterPortal("register");
   const openLogin = () => onEnterPortal("signin");
 
-  const visibleSections = w.home.order.filter((key) => !w.home.hidden.includes(key));
+  const view = useMemo(() => parseHash(hash), [hash]);
+
+  // Hash-based routing: no router — anchor clicks and the browser's own
+  // back/forward buttons both just change window.location.hash, so a single
+  // `hashchange` listener is enough to drive every public view.
+  useEffect(() => {
+    const onHashChange = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  // Scroll behaviour per view: top for Programmes/Blog/BlogPost and bare
+  // Home, smooth-scroll to the matching section id for home anchors.
+  useEffect(() => {
+    const run = () => {
+      if (view.type === "home" && view.anchor) {
+        document.getElementById(view.anchor)?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+      } else {
+        window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
+      }
+    };
+    const id = window.requestAnimationFrame(run);
+    return () => window.cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hash]);
+
+  // Document title per view.
+  useEffect(() => {
+    const base = displayName || "Africa of Hope";
+    if (view.type === "programmes") document.title = `Programmes — ${base}`;
+    else if (view.type === "blog") document.title = `Blog — ${base}`;
+    else if (view.type === "blogPost") document.title = `Blog — ${base}`;
+    else document.title = base;
+  }, [view, displayName]);
+
+  // Animated header shadow once the page scrolls past the hero area.
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  const goHomeTop = useCallback((e: MouseEvent) => {
+    if (HOME_RE.test(window.location.hash || "#home")) {
+      e.preventDefault();
+      window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
+    }
+  }, [reduceMotion]);
+
+  const visibleSections = useMemo(() => {
+    const order: HomeSectionKey[] = w.home.order.includes("summary")
+      ? w.home.order
+      : ["summary", ...w.home.order];
+    return order.filter((key) => !w.home.hidden.includes(key) && HOME_SECTION_REGISTRY[key]);
+  }, [w.home.order, w.home.hidden]);
+
   const announcements = state.announcements
     .filter((announcement) => {
       const isPublic = announcement.audience === "public";
@@ -75,12 +153,15 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
     ? announcements
     : w.announcementText.trim() ? [w.announcementText.trim()] : [];
 
-  // The section is rendered by React, so restore a #programs deep-link once it
-  // exists in the document instead of relying on the browser's initial lookup.
+  const [blogPreview, setBlogPreview] = useState<BlogPost[] | null>(null);
   useEffect(() => {
-    if (window.location.hash === "#programs") {
-      document.getElementById("programs")?.scrollIntoView();
-    }
+    let active = true;
+    listPublishedPosts({ limit: 3 }).then((posts) => {
+      if (active) setBlogPreview(posts);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   return (
@@ -108,18 +189,21 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
         </div>
       )}
 
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-emerald-950/90 text-white backdrop-blur-md">
+      <motion.header
+        animate={{ boxShadow: scrolled ? "0 10px 30px -12px rgba(2,44,34,0.45)" : "0 0px 0px rgba(2,44,34,0)" }}
+        transition={{ duration: 0.25 }}
+        className="sticky top-0 z-40 border-b border-white/10 bg-emerald-950/90 text-white backdrop-blur-md"
+      >
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4">
-          <Crest logoUrl={w.logoUrl} />
-          <div className="leading-tight">
-            <p className="text-sm font-bold uppercase tracking-[0.18em]">{displayName}</p>
-            <p className="hidden text-[11px] text-emerald-200/90 sm:block">{w.tagline || "Institutional Training Academy"}</p>
-          </div>
+          <a href="#home" onClick={goHomeTop} className="flex min-w-0 items-center">
+            <BrandLockup logoUrl={w.logoUrl} academyName={displayName} tagline={w.tagline || "Institutional Training Academy"} tone="dark" size="md" />
+          </a>
           <nav className="ml-auto hidden items-center gap-1 lg:flex">
             {navLinks.map((l) => (
               <a
                 key={l.id}
                 href={l.href}
+                onClick={HOME_RE.test(l.href.trim()) ? goHomeTop : undefined}
                 className="rounded-xl px-3 py-2 text-sm font-medium text-emerald-100/90 transition hover:bg-white/10 hover:text-white"
               >
                 {l.label}
@@ -128,24 +212,34 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
           </nav>
           <div className="ml-auto flex items-center gap-2 lg:ml-2">
             {w.header.showApply && (
-              <Button onClick={openApply} variant="ghost" className="hidden h-10 text-emerald-100 hover:bg-white/10 hover:text-white sm:inline-flex">
+              <motion.button
+                type="button"
+                onClick={openApply}
+                {...buttonMotionProps}
+                className="hidden h-10 items-center rounded-xl px-4 text-sm font-medium text-emerald-100 transition hover:bg-white/10 hover:text-white sm:inline-flex"
+              >
                 {w.header.applyText || "Apply online"}
-              </Button>
+              </motion.button>
             )}
-            <Button onClick={openLogin} className="h-10 bg-amber-400 text-emerald-950 hover:bg-amber-300">
+            <motion.button
+              type="button"
+              onClick={openLogin}
+              {...buttonMotionProps}
+              className="inline-flex h-10 items-center rounded-xl bg-amber-400 px-4 text-sm font-semibold text-emerald-950 shadow-sm transition hover:bg-amber-300"
+            >
               <LogIn className="mr-1.5 h-4 w-4" /> {w.header.loginText || "Portal login"}
-            </Button>
+            </motion.button>
             <button
               type="button"
               onClick={() => setMenu(true)}
               aria-label="Open menu"
-              className="grid h-10 w-10 place-items-center rounded-xl text-emerald-100 hover:bg-white/10 lg:hidden"
+              className="grid h-10 w-10 min-h-10 min-w-10 place-items-center rounded-xl text-emerald-100 hover:bg-white/10 lg:hidden"
             >
               <Menu className="h-5 w-5" />
             </button>
           </div>
         </div>
-      </header>
+      </motion.header>
 
       <AnimatePresence>
         {menu && (
@@ -161,15 +255,15 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ duration: 0.28, ease: "easeOut" }}
-              className="absolute right-0 top-0 h-full w-72 bg-emerald-950 p-4 text-white shadow-2xl"
+              className="absolute right-0 top-0 h-full w-72 max-w-[85vw] bg-emerald-950 p-4 text-white shadow-2xl"
             >
               <div className="flex items-center justify-between">
-                <span className="text-sm font-bold uppercase tracking-widest">Menu</span>
+                <BrandLockup logoUrl={w.logoUrl} academyName={displayName} size="sm" tone="dark" showTagline={false} />
                 <button
                   type="button"
                   onClick={() => setMenu(false)}
                   aria-label="Close menu"
-                  className="rounded-lg p-1.5 hover:bg-white/10"
+                  className="grid h-10 w-10 min-h-10 min-w-10 place-items-center rounded-lg hover:bg-white/10"
                 >
                   <X className="h-5 w-5" />
                 </button>
@@ -179,8 +273,8 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
                   <a
                     key={l.id}
                     href={l.href}
-                    onClick={() => setMenu(false)}
-                    className="rounded-xl px-3 py-3 text-sm font-medium text-emerald-100 transition hover:bg-white/10"
+                    onClick={(e) => { setMenu(false); if (HOME_RE.test(l.href.trim())) goHomeTop(e); }}
+                    className="min-h-10 rounded-xl px-3 py-3 text-sm font-medium text-emerald-100 transition hover:bg-white/10"
                   >
                     {l.label}
                   </a>
@@ -189,7 +283,7 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
                   <button
                     type="button"
                     onClick={() => { setMenu(false); openApply(); }}
-                    className="mt-3 rounded-xl bg-amber-400 px-3 py-3 text-sm font-semibold text-emerald-950"
+                    className="mt-3 min-h-10 rounded-xl bg-amber-400 px-3 py-3 text-sm font-semibold text-emerald-950"
                   >
                     {w.header.applyText || "Apply online"}
                   </button>
@@ -200,80 +294,114 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
         )}
       </AnimatePresence>
 
-      <HeroSlider onOpenApply={openApply} onEnterPortal={openLogin} />
+      <AnimatePresence mode="wait">
+        <motion.main
+          key={view.type === "blogPost" ? `blogPost:${view.slug}` : view.type}
+          initial={reduceMotion ? false : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={reduceMotion ? undefined : { opacity: 0 }}
+          transition={{ duration: 0.22, ease: "easeOut" }}
+        >
+          {view.type === "programmes" && <ProgrammesPage programs={state.programs} onApply={openApply} />}
+          {view.type === "blog" && <BlogListPage />}
+          {view.type === "blogPost" && <BlogPostPage slug={view.slug} />}
 
-      <section id="programs" className="scroll-mt-20 border-y border-emerald-900/10 bg-white py-16 sm:py-20">
-        <div className="mx-auto max-w-6xl px-4">
-          <div className="max-w-2xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Explore our programmes</p>
-            <h2 className="mt-3 text-3xl font-bold tracking-tight text-emerald-950 sm:text-4xl">Build practical skills for the work ahead.</h2>
-            <p className="mt-4 text-sm leading-6 text-slate-600 sm:text-base">
-              Choose from our current catalogue of certificate programmes and start your application online.
-            </p>
-          </div>
+          {view.type === "home" && (
+            <>
+              <HeroSlider onOpenApply={openApply} onEnterPortal={openLogin} />
 
-          {state.programs.length > 0 ? (
-            <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {state.programs.map((program) => (
-                <article key={program.id} className="group flex h-full flex-col overflow-hidden rounded-2xl border border-emerald-900/10 bg-white shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
-                  <img
-                    src={programImage(program)}
-                    alt=""
-                    className="h-44 w-full object-cover"
-                    loading="lazy"
+              {visibleSections.map((key) => {
+                const Section = HOME_SECTION_REGISTRY[key];
+                return (
+                  <Section
+                    key={key}
+                    copy={w.home.sections[key] ?? {}}
+                    w={w}
+                    settings={settings}
+                    onApply={openApply}
+                    onLogin={openLogin}
+                    programsCount={state.programs.length}
                   />
-                  <div className="flex flex-1 flex-col p-5">
-                    <div className="flex items-start justify-between gap-3">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">{program.category || "Certificate programme"}</p>
-                      <BookOpen className="h-4 w-4 shrink-0 text-amber-500" aria-hidden="true" />
-                    </div>
-                    <h3 className="mt-2 text-lg font-semibold text-emerald-950">{program.title}</h3>
-                    <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-600">{program.description || "Programme details will be available soon."}</p>
-                    <dl className="mt-5 space-y-2 border-t border-emerald-900/10 pt-4 text-sm text-slate-600">
-                      <div className="flex items-center gap-2">
-                        <Clock3 className="h-4 w-4 shrink-0 text-emerald-700" aria-hidden="true" />
-                        <dt className="sr-only">Duration</dt>
-                        <dd>{programDuration(program.durationWeeks)}</dd>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Award className="h-4 w-4 shrink-0 text-emerald-700" aria-hidden="true" />
-                        <dt className="sr-only">Certification</dt>
-                        <dd>{program.certification || "Certificate on completion"}</dd>
-                      </div>
-                    </dl>
-                    <Button onClick={openApply} className="mt-5 w-full bg-emerald-800 text-white hover:bg-emerald-700">
-                      Apply for this programme <ChevronRight className="ml-1 h-4 w-4" />
-                    </Button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="mt-10 rounded-2xl border border-dashed border-emerald-900/20 bg-emerald-50/60 p-8 text-center">
-              <BookOpen className="mx-auto h-6 w-6 text-emerald-700" aria-hidden="true" />
-              <p className="mt-3 font-medium text-emerald-950">Our current programme catalogue is being updated.</p>
-              <p className="mt-1 text-sm text-slate-600">Please check back soon or apply online to speak with admissions.</p>
-              <Button onClick={openApply} variant="outline" className="mt-5 border-emerald-800 text-emerald-800 hover:bg-emerald-100">
-                Apply online
-              </Button>
-            </div>
-          )}
-        </div>
-      </section>
+                );
+              })}
 
-      {visibleSections.map((key) => {
-        const Section = HOME_SECTION_REGISTRY[key];
-        return (
-          <Section
-            key={key}
-            copy={w.home.sections[key] ?? {}}
-            w={w}
-            settings={settings}
-            onApply={openApply}
-            onLogin={openLogin}
-          />
-        );
-      })}
+              <section id="programmes-teaser" className="scroll-mt-20 border-y border-emerald-900/10 bg-white py-14 sm:py-16">
+                <div className="mx-auto max-w-6xl px-4">
+                  <ScrollReveal className="flex flex-col items-start justify-between gap-6 rounded-3xl bg-gradient-to-br from-emerald-50 to-amber-50 p-8 sm:flex-row sm:items-center sm:p-10">
+                    <div className="max-w-xl">
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Explore our programmes</p>
+                      <h2 className="mt-3 text-2xl font-bold tracking-tight text-emerald-950 sm:text-3xl">
+                        {state.programs.length > 0
+                          ? `${state.programs.length} certificate programmes, ready to apply online.`
+                          : "A growing catalogue of certificate programmes."}
+                      </h2>
+                      <p className="mt-3 text-sm leading-6 text-slate-600">
+                        Browse the full programme catalogue — categories, duration, certification and entry requirements —
+                        then apply online in minutes.
+                      </p>
+                    </div>
+                    <motion.a
+                      href="#programmes"
+                      {...buttonMotionProps}
+                      className="inline-flex h-11 shrink-0 items-center gap-2 rounded-xl bg-emerald-800 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+                    >
+                      View all programmes <ChevronRight className="h-4 w-4" />
+                    </motion.a>
+                  </ScrollReveal>
+                </div>
+              </section>
+
+              <section id="blog-preview" className="scroll-mt-20 bg-[#f6f8f7] py-16 sm:py-20">
+                <div className="mx-auto max-w-6xl px-4">
+                  <ScrollReveal className="flex flex-wrap items-end justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Latest from our blog</p>
+                      <h2 className="mt-3 text-2xl font-bold tracking-tight text-emerald-950 sm:text-3xl">
+                        Stories, news and updates.
+                      </h2>
+                    </div>
+                    <a href="#blog" className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-800 hover:text-emerald-900">
+                      Visit the blog <ArrowRight className="h-4 w-4" />
+                    </a>
+                  </ScrollReveal>
+
+                  {blogPreview && blogPreview.length > 0 ? (
+                    <StaggerGroup className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                      {blogPreview.map((post) => (
+                        <motion.a
+                          key={post.id}
+                          href={`#blog/${post.slug}`}
+                          variants={fadeUpVariants}
+                          whileHover={{ y: -6 }}
+                          className="flex h-full flex-col overflow-hidden rounded-2xl border border-emerald-900/10 bg-white p-5 shadow-sm transition-shadow hover:shadow-lg"
+                        >
+                          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">{post.category || "News"}</p>
+                          <h3 className="mt-2 line-clamp-2 text-base font-semibold text-emerald-950">{post.title}</h3>
+                          <p className="mt-2 line-clamp-2 flex-1 text-sm leading-6 text-slate-600">
+                            {post.excerpt || post.body.slice(0, 140)}
+                          </p>
+                          <div className="mt-4 flex items-center gap-3 border-t border-emerald-900/10 pt-3 text-[11px] text-slate-500">
+                            <span className="inline-flex items-center gap-1">
+                              <CalendarDays className="h-3 w-3" /> {formatDate(post.publishedAt)}
+                            </span>
+                            <span>{readingTimeMinutes(post.body)} min read</span>
+                          </div>
+                        </motion.a>
+                      ))}
+                    </StaggerGroup>
+                  ) : (
+                    <ScrollReveal delay={0.08} className="mt-8 rounded-2xl border border-dashed border-emerald-900/20 bg-white/60 p-8 text-center">
+                      <BookOpen className="mx-auto h-6 w-6 text-emerald-700" aria-hidden="true" />
+                      <p className="mt-3 font-medium text-emerald-950">New stories are on the way.</p>
+                      <p className="mt-1 text-sm text-slate-600">Check back soon for news from the academy.</p>
+                    </ScrollReveal>
+                  )}
+                </div>
+              </section>
+            </>
+          )}
+        </motion.main>
+      </AnimatePresence>
 
       <footer className="border-t border-emerald-900/10 bg-white">
         <div className="border-b border-emerald-900/10 bg-emerald-950 text-white">
@@ -299,13 +427,7 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
 
         <div className="mx-auto grid max-w-6xl gap-8 px-4 py-12 md:grid-cols-4">
           <div className="md:col-span-2">
-            <div className="flex items-center gap-3">
-              <Crest logoUrl={w.logoUrl} />
-              <div className="leading-tight">
-                <p className="text-sm font-bold uppercase tracking-[0.18em] text-emerald-900">{displayName}</p>
-                <p className="text-[11px] text-slate-500">{w.tagline || settings.motto}</p>
-              </div>
-            </div>
+            <BrandLockup logoUrl={w.logoUrl} academyName={displayName} tagline={w.tagline || settings.motto} tone="light" size="md" />
             {w.footerAbout && <p className="mt-5 text-sm text-slate-600">{w.footerAbout}</p>}
           </div>
           <div>

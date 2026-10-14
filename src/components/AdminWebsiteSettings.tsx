@@ -26,6 +26,7 @@ const TABS: { key: string; label: string; icon: typeof Globe; hint: string }[] =
 ];
 
 const SECTION_LABELS: Record<HomeSectionKey, string> = {
+  summary: "Institution summary",
   about: "About / mission",
   features: "Why choose us",
   impact: "Impact & testimonials",
