@@ -62,9 +62,8 @@ export interface SignUpResult {
   /**
    * signed_in: account created and session started.
    * confirm_email: account created, applicant must confirm their email first.
-   * application_only: sign-ups are disabled, so only a pending profile was filed.
    */
-  status?: "signed_in" | "confirm_email" | "application_only";
+  status?: "signed_in" | "confirm_email";
 }
 
 export interface ProfilePatch {
@@ -351,10 +350,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           },
         });
         if (error) {
-          // Projects with email sign-up disabled still accept a profile-only application.
           if (/sign ?ups? (are )?(not allowed|disabled)/i.test(error.message)) {
-            value.registerStudent(payload);
-            return { error: null, status: "application_only" };
+            return { error: "Online registration is currently unavailable. Please contact the admissions office." };
           }
           return { error: error.message };
         }

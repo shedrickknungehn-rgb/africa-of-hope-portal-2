@@ -139,3 +139,81 @@ drop policy if exists documents_admin_all on storage.objects;
 create policy documents_admin_all on storage.objects for all to authenticated
   using (bucket_id in ('documents', 'certificates') and public.is_portal_admin())
   with check (bucket_id in ('documents', 'certificates') and public.is_portal_admin());
+
+-- documents: enforce the same limits the portal applies in the browser
+update storage.buckets
+set file_size_limit = 10485760,
+    allowed_mime_types = array[
+      'application/pdf',
+      'image/jpeg', 'image/png', 'image/webp',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ]
+where id = 'documents';
+
+-- 6. Profiles and programmes: stop self-promotion -------------------------------------
+-- The earlier "*_portal_all" policies let any signed-in user edit any profile,
+-- including role/status. is_portal_admin() trusts those columns, so they must be
+-- protected. Everyone signed in can still read profiles (directories, rosters).
+drop policy if exists profiles_portal_all on public.profiles;
+
+drop policy if exists profiles_portal_read on public.profiles;
+create policy profiles_portal_read on public.profiles for select to authenticated
+  using (true);
+
+drop policy if exists profiles_self_insert on public.profiles;
+create policy profiles_self_insert on public.profiles for insert to authenticated
+  with check (id = auth.uid() and role = 'Student' and status = 'Pending Approval');
+
+drop policy if exists profiles_self_update on public.profiles;
+create policy profiles_self_update on public.profiles for update to authenticated
+  using (id = auth.uid())
+  with check (id = auth.uid());
+
+drop policy if exists profiles_admin_all on public.profiles;
+create policy profiles_admin_all on public.profiles for all to authenticated
+  using (public.is_portal_admin())
+  with check (public.is_portal_admin());
+
+-- Role and status may change only through an active admin (or server-side code).
+create or replace function public.protect_profile_privileges()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  -- Triggers, SQL editor and service-role calls are trusted.
+  if coalesce(auth.role(), '') not in ('authenticated', 'anon') then
+    return new;
+  end if;
+  if public.is_portal_admin() then
+    return new;
+  end if;
+  if tg_op = 'INSERT' then
+    if new.role is distinct from 'Student' or new.status is distinct from 'Pending Approval' then
+      raise exception 'Only administrators can assign roles or approve accounts';
+    end if;
+  elsif new.role is distinct from old.role or new.status is distinct from old.status then
+    raise exception 'Only administrators can change roles or account status';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists protect_profile_privileges on public.profiles;
+create trigger protect_profile_privileges
+  before insert or update on public.profiles
+  for each row execute function public.protect_profile_privileges();
+
+-- Programmes: everyone reads, only admins write.
+drop policy if exists programs_portal_all on public.programs;
+
+drop policy if exists programs_portal_read on public.programs;
+create policy programs_portal_read on public.programs for select to authenticated
+  using (true);
+
+drop policy if exists programs_admin_all on public.programs;
+create policy programs_admin_all on public.programs for all to authenticated
+  using (public.is_portal_admin())
+  with check (public.is_portal_admin());

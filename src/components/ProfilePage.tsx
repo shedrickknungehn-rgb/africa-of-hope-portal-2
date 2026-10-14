@@ -63,7 +63,7 @@ export default function ProfilePage() {
         ))}
       </div>
 
-      {tab === "details" && <DetailsForm user={currentUser} />}
+      {tab === "details" && <DetailsForm key={currentUser.id} user={currentUser} />}
       {tab === "documents" && <DocumentsPanel user={currentUser} />}
       {tab === "security" && <SecurityPanel user={currentUser} />}
     </div>
@@ -198,7 +198,14 @@ function DetailsForm({ user }: { user: User }) {
   const dirty = (Object.keys(form) as (keyof typeof form)[]).some((k) => form[k].trim() !== initial[k].trim());
   const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
 
-  useEffect(() => setForm(fromUser(user)), [user]);
+  // Live refreshes create a new user object. Follow remote changes only while
+  // the form has no unsaved edits, so typing is never overwritten.
+  const synced = useRef(initial);
+  useEffect(() => {
+    const prev = synced.current;
+    synced.current = initial;
+    setForm((f) => ((Object.keys(f) as (keyof typeof f)[]).every((k) => f[k] === prev[k]) ? initial : f));
+  }, [initial]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();

@@ -6,7 +6,7 @@ import {
   GraduationCap, KeyRound, Loader2, Lock, LogIn, Mail, MailCheck, Phone, Search, ShieldCheck,
   Sparkles, User as UserIcon, UserPlus, type LucideIcon,
 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { OPENED_FROM_RECOVERY_LINK, supabase } from "@/integrations/supabase/client";
 import { useApp, type SignUpResult } from "@/context/AppContext";
 import type { Role, User } from "@/types";
 import { programImage } from "@/lib/programImages";
@@ -764,7 +764,7 @@ function ResetDialog({ open, onOpenChange, initialEmail }: {
 /** Opens when a user lands on the site from a password-reset email link. */
 export function PasswordRecoveryDialog() {
   const { changePassword } = useApp();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(OPENED_FROM_RECOVERY_LINK);
   const [pw, setPw] = useState({ a: "", b: "" });
   const [errors, setErrors] = useState<{ a?: string; b?: string }>({});
   const [busy, setBusy] = useState(false);
@@ -827,10 +827,11 @@ export default function AuthPortal({
   const [resetOpen, setResetOpen] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [verifyOpen, setVerifyOpen] = useState(false);
-  const [done, setDone] = useState<{ email: string; status: "confirm_email" | "application_only" } | null>(null);
+  // Email address awaiting confirmation after a successful registration.
+  const [done, setDone] = useState<string | null>(null);
 
   const heading =
-    done ? (done.status === "confirm_email" ? "Confirm your email" : "Application received") : tab === "signin" ? "Welcome back" : "Create your account";
+    done ? "Confirm your email" : tab === "signin" ? "Welcome back" : "Create your account";
   const sub = done
     ? ""
     : tab === "signin"
@@ -875,18 +876,11 @@ export default function AuthPortal({
                   <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-emerald-50">
                     <MailCheck className="h-7 w-7 text-emerald-700" />
                   </span>
-                  {done.status === "confirm_email" ? (
-                    <p className="mt-4 text-sm text-slate-600">
-                      We sent a confirmation link to{" "}
-                      <span className="font-semibold text-slate-900">{done.email}</span>. Confirm your email, then
-                      sign in. The registrar will review your application.
-                    </p>
-                  ) : (
-                    <p className="mt-4 text-sm text-slate-600">
-                      Thank you. The registrar will review your application and contact you at{" "}
-                      <span className="font-semibold text-slate-900">{done.email}</span> with your portal access.
-                    </p>
-                  )}
+                  <p className="mt-4 text-sm text-slate-600">
+                    We sent a confirmation link to{" "}
+                    <span className="font-semibold text-slate-900">{done}</span>. Confirm your email, then
+                    sign in. The registrar will review your application.
+                  </p>
                   <Button
                     className={cn(PRIMARY, "mt-6 w-full")}
                     onClick={() => { setDone(null); setTab("signin"); }}
@@ -935,7 +929,7 @@ export default function AuthPortal({
                   ) : (
                     <RegisterForm
                       onDone={(email, status) => {
-                        if (status !== "signed_in") setDone({ email, status });
+                        if (status === "confirm_email") setDone(email);
                       }}
                     />
                   )}
