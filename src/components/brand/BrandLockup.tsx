@@ -62,6 +62,8 @@ export interface BrandLockupProps {
   showTagline?: boolean;
   className?: string;
   nameClassName?: string;
+  /** Extra classes on the tagline line — e.g. `"hidden sm:block"` so compact headers drop it on narrow phones. */
+  taglineClassName?: string;
 }
 
 export default function BrandLockup({
@@ -73,6 +75,7 @@ export default function BrandLockup({
   showTagline = true,
   className,
   nameClassName,
+  taglineClassName,
 }: BrandLockupProps) {
   return (
     <div className={cn("flex min-w-0 items-center gap-3", className)}>
@@ -118,7 +121,7 @@ export default function BrandLockup({
           {academyName}
         </p>
         {showTagline && tagline && (
-          <p className={cn(TAGLINE_SIZE[size], "truncate", TONE_TAGLINE[tone])}>{tagline}</p>
+          <p className={cn(TAGLINE_SIZE[size], "truncate", TONE_TAGLINE[tone], taglineClassName)}>{tagline}</p>
         )}
       </div>
     </div>

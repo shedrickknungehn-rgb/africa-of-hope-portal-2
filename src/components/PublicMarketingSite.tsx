@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion, MotionConfig, useReducedMotion } from "framer-motion";
 import {
   LogIn, Menu, X, Mail, Phone,
   MapPin, Sparkles, Globe, ChevronRight, ArrowRight,
@@ -18,7 +18,6 @@ import { ScrollReveal, StaggerGroup } from "./public/motion";
 import { buttonMotionProps, fadeUpVariants } from "./public/motionConstants";
 import { listPublishedPosts, readingTimeMinutes, type BlogPost } from "@/lib/blogPublic";
 import { format } from "date-fns";
-import type { HomeSectionKey } from "@/types";
 
 const NAV_LINKS: [string, string][] = [
   ["#home", "Home"],
@@ -43,7 +42,16 @@ function parseHash(hash: string): View {
   const h = hash || "#home";
   if (PROGRAMMES_RE.test(h)) return { type: "programmes" };
   if (BLOG_RE.test(h)) return { type: "blog" };
-  if (/^#blog\//i.test(h)) return { type: "blogPost", slug: decodeURIComponent(h.replace(/^#blog\//i, "")) };
+  if (/^#blog\//i.test(h)) {
+    const raw = h.replace(/^#blog\//i, "");
+    let slug = raw;
+    try {
+      slug = decodeURIComponent(raw);
+    } catch {
+      // Malformed percent-encoding — fall back to the raw slug rather than crash.
+    }
+    return { type: "blogPost", slug };
+  }
   if (HOME_RE.test(h)) return { type: "home", anchor: null };
   // Any other anchor (#about, #impact, #verify, #admissions, #contact, #summary…) stays on Home and scrolls there.
   return { type: "home", anchor: h.replace(/^#/, "") };
@@ -56,6 +64,23 @@ function formatDate(iso: string | null): string {
   } catch {
     return "";
   }
+}
+
+/**
+ * Scrolls to a Home section anchor once the Home view has actually mounted
+ * (and again whenever the anchor changes while Home stays mounted). Rendered
+ * inside the Home branch so its mount effect fires at the right time — see
+ * the scroll-behaviour comment above.
+ */
+function HomeAnchorScroll({ anchor, reduceMotion }: { anchor: string | null; reduceMotion: boolean }) {
+  useEffect(() => {
+    if (!anchor) return;
+    const id = window.requestAnimationFrame(() => {
+      document.getElementById(anchor)?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [anchor, reduceMotion]);
+  return null;
 }
 
 export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: (tab?: AuthTab) => void }) {
@@ -92,26 +117,24 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
   }, []);
 
   // Scroll behaviour per view: top for Programmes/Blog/BlogPost and bare
-  // Home, smooth-scroll to the matching section id for home anchors.
+  // Home. Section anchors on Home (`#about`, `#verify`, …) are scrolled to by
+  // `HomeAnchorScroll` once the Home view has actually mounted — `AnimatePresence
+  // mode="wait"` delays mounting the new view until the old one finishes its
+  // exit animation, so running `scrollIntoView` here (before that mount) would
+  // find no element yet and silently land at the top of Home instead.
+  const homeAnchor = view.type === "home" ? view.anchor : null;
   useEffect(() => {
-    const run = () => {
-      if (view.type === "home" && view.anchor) {
-        document.getElementById(view.anchor)?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
-      } else {
-        window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
-      }
-    };
+    if (homeAnchor) return;
+    const run = () => window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
     const id = window.requestAnimationFrame(run);
     return () => window.cancelAnimationFrame(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hash]);
+  }, [hash, homeAnchor, reduceMotion]);
 
   // Document title per view.
   useEffect(() => {
     const base = displayName || "Africa of Hope";
     if (view.type === "programmes") document.title = `Programmes — ${base}`;
-    else if (view.type === "blog") document.title = `Blog — ${base}`;
-    else if (view.type === "blogPost") document.title = `Blog — ${base}`;
+    else if (view.type === "blog" || view.type === "blogPost") document.title = `Blog — ${base}`;
     else document.title = base;
   }, [view, displayName]);
 
@@ -130,12 +153,12 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
     }
   }, [reduceMotion]);
 
-  const visibleSections = useMemo(() => {
-    const order: HomeSectionKey[] = w.home.order.includes("summary")
-      ? w.home.order
-      : ["summary", ...w.home.order];
-    return order.filter((key) => !w.home.hidden.includes(key) && HOME_SECTION_REGISTRY[key]);
-  }, [w.home.order, w.home.hidden]);
+  // `w.home.order` is normalised (every registry key present, "summary"
+  // first when missing) by mergeWebsiteSettings, so no special-casing here.
+  const visibleSections = useMemo(
+    () => w.home.order.filter((key) => !w.home.hidden.includes(key) && HOME_SECTION_REGISTRY[key]),
+    [w.home.order, w.home.hidden],
+  );
 
   const announcements = state.announcements
     .filter((announcement) => {
@@ -165,6 +188,7 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
   }, []);
 
   return (
+    <MotionConfig reducedMotion="user">
     <div id="top" className="min-h-[100dvh] scroll-smooth bg-[#f6f8f7] text-slate-900">
       {w.announcementEnabled && bannerItems.length > 0 && (
         <div className="overflow-hidden bg-amber-400 text-emerald-950" role="region" aria-label="Announcements">
@@ -196,7 +220,14 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
       >
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4">
           <a href="#home" onClick={goHomeTop} className="flex min-w-0 items-center">
-            <BrandLockup logoUrl={w.logoUrl} academyName={displayName} tagline={w.tagline || "Institutional Training Academy"} tone="dark" size="md" />
+            <BrandLockup
+              logoUrl={w.logoUrl}
+              academyName={displayName}
+              tagline={w.tagline || "Institutional Training Academy"}
+              tone="dark"
+              size="md"
+              taglineClassName="hidden sm:block"
+            />
           </a>
           <nav className="ml-auto hidden items-center gap-1 lg:flex">
             {navLinks.map((l) => (
@@ -308,6 +339,7 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
 
           {view.type === "home" && (
             <>
+              <HomeAnchorScroll anchor={view.anchor} reduceMotion={!!reduceMotion} />
               <HeroSlider onOpenApply={openApply} onEnterPortal={openLogin} />
 
               {visibleSections.map((key) => {
@@ -499,5 +531,6 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
       </footer>
 
     </div>
+    </MotionConfig>
   );
 }

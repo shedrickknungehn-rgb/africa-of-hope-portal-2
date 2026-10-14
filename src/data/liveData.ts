@@ -6,6 +6,7 @@ import type {
   Certificate,
   Cohort,
   FeeTransaction,
+  HomeSectionKey,
   Program,
   SystemSettings,
   User,
@@ -98,6 +99,23 @@ function mergeObject<T extends Record<string, unknown>>(defaults: T, raw: unknow
 }
 
 /**
+ * A saved `home.order` array wins as-is (see `mergeObject` above), so a site
+ * that saved its section order before a new homepage section was registered
+ * (e.g. "summary") would otherwise never see that section in the CMS reorder
+ * list or on the public site. Append any registry key missing from the saved
+ * order — "summary" goes first since it's meant to lead the page — so both
+ * AdminWebsiteSettings and PublicMarketingSite can treat `home.order` as
+ * always-complete and never special-case a missing key.
+ */
+function normalizeHomeOrder(order: HomeSectionKey[], knownOrder: HomeSectionKey[]): HomeSectionKey[] {
+  const present = new Set(order);
+  const missing = knownOrder.filter((key) => !present.has(key));
+  if (missing.length === 0) return order;
+  const rest = missing.filter((key) => key !== "summary");
+  return missing.includes("summary") ? ["summary", ...order, ...rest] : [...order, ...rest];
+}
+
+/**
  * Deep-merges a saved `website_settings` JSON blob onto the current defaults,
  * so adding a new CMS field (or renaming an old one's defaults) never leaves a
  * section blank for sites that saved before the field existed. `data:` image
@@ -107,7 +125,11 @@ export function mergeWebsiteSettings(
   defaults: WebsiteSettings,
   raw: unknown,
 ): WebsiteSettings {
-  return mergeObject(defaults as unknown as Record<string, unknown>, raw) as unknown as WebsiteSettings;
+  const merged = mergeObject(defaults as unknown as Record<string, unknown>, raw) as unknown as WebsiteSettings;
+  return {
+    ...merged,
+    home: { ...merged.home, order: normalizeHomeOrder(merged.home.order, defaults.home.order) },
+  };
 }
 
 function mapSettings(

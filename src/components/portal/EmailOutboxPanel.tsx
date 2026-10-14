@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, CheckCircle2, Clock, Mail, RefreshCw, Send, XCircle } from "lucide-react";
 import {
-  emailOutboxApi, type EmailOutboxRow, type EmailOutboxStatus,
+  emailOutboxApi, type EmailOutboxCounts, type EmailOutboxRow, type EmailOutboxStatus,
 } from "@/lib/emailOutbox";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,7 @@ const STATUS_TONE: Record<EmailOutboxStatus, string> = {
 export default function EmailOutboxPanel() {
   const [rows, setRows] = useState<EmailOutboxRow[]>([]);
   const [configured, setConfigured] = useState<boolean | null>(null);
+  const [statusCounts, setStatusCounts] = useState<EmailOutboxCounts | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
@@ -31,10 +32,11 @@ export default function EmailOutboxPanel() {
     try {
       const [recent, status] = await Promise.all([
         emailOutboxApi.recent(50),
-        emailOutboxApi.status().catch(() => ({ configured: false })),
+        emailOutboxApi.status().catch((): { configured: boolean; counts?: EmailOutboxCounts } => ({ configured: false })),
       ]);
       setRows(recent);
       setConfigured(status.configured);
+      setStatusCounts(status.counts ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -44,7 +46,12 @@ export default function EmailOutboxPanel() {
 
   useEffect(() => { void load(); }, []);
 
-  const counts = emailOutboxApi.countsByStatus(rows);
+  // The status endpoint's counts cover every email ever queued; `rows` is
+  // capped at the 50 most recent, so counting from `rows` alone would be
+  // wrong once there are more than 50. Fall back to the row-derived counts
+  // only if the status endpoint didn't return any (e.g. provider not
+  // configured yet).
+  const counts = statusCounts ?? emailOutboxApi.countsByStatus(rows);
 
   const sendNow = async () => {
     setSending(true);

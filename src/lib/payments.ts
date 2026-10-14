@@ -52,6 +52,8 @@ export interface PaymentSubmission {
   reviewNote: string;
   feeTransactionId: string | null;
   receiptNumber: string | null;
+  /** USD amount actually posted to fee_transactions. Equals `amount` for USD submissions; for LRD submissions it's the reviewer-supplied conversion, set only once confirmed. */
+  ledgerAmountUsd: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -102,6 +104,7 @@ interface PaymentSubmissionRow {
   review_note: string | null;
   fee_transaction_id: string | null;
   receipt_number: string | null;
+  ledger_amount_usd: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -140,6 +143,7 @@ export function mapSubmissionRow(row: PaymentSubmissionRow): PaymentSubmission {
     reviewNote: row.review_note ?? "",
     feeTransactionId: row.fee_transaction_id,
     receiptNumber: row.receipt_number,
+    ledgerAmountUsd: row.ledger_amount_usd,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -183,6 +187,18 @@ export function explainPaymentError(error: { message: string; code?: string } | 
   }
   if (error.message === "payment_not_found") {
     return "This payment report could not be found.";
+  }
+  if (error.message === "ledger_amount_required") {
+    return "Enter the USD amount actually credited for this LRD payment before confirming it.";
+  }
+  if (error.message === "invalid_payer_phone") {
+    return "Enter a valid mobile money number, e.g. +231 77 667 9963.";
+  }
+  if (error.message === "category_too_long") {
+    return "Shorten the category to 60 characters or fewer.";
+  }
+  if (error.message === "note_too_long") {
+    return "Shorten the note to 500 characters or fewer.";
   }
   if (error.message === "not_authenticated" || error.message === "forbidden") {
     return "You don't have permission to do that.";
@@ -321,11 +337,18 @@ export function createPaymentsApi(client: PaymentsApiClient) {
       return data as string;
     },
 
-    /** Confirms or rejects a pending submission via the `review_payment` RPC. A reject requires a note. */
+    /**
+     * Confirms or rejects a pending submission via the `review_payment` RPC. A reject requires a note.
+     * `ledgerAmountUsd` is required (and must be > 0) when confirming an LRD submission, since
+     * fee_transactions has no currency column and only ever carries a USD amount; it's ignored for
+     * USD submissions, which always post their own amount. Omitting it on an LRD confirm throws
+     * `ledger_amount_required` (translated by explainPaymentError).
+     */
     async review(
       submissionId: string,
       decision: PaymentReviewDecision,
       note: string,
+      ledgerAmountUsd?: number,
     ): Promise<{ id: string; status: PaymentSubmissionStatus; receipt_number: string | null }> {
       if (decision === "reject" && !note.trim()) {
         throw new Error("Add a note explaining the rejection before you submit it.");
@@ -334,6 +357,7 @@ export function createPaymentsApi(client: PaymentsApiClient) {
         p_submission_id: submissionId,
         p_decision: decision,
         p_note: note,
+        p_ledger_amount_usd: ledgerAmountUsd ?? null,
       });
       const message = explainPaymentError(error);
       if (message) throw new Error(message);

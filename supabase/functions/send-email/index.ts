@@ -18,6 +18,36 @@ const OUTBOX_STATUSES = ["queued", "sending", "sent", "failed", "skipped"] as co
 const BRAND_NAME = "Africa of Hope Academy";
 const BRAND_COLOR = "#0f5132";
 
+/**
+ * Constant-time string comparison for the `x-cron-secret` header. A plain
+ * `===` lets an attacker learn the secret one byte at a time from response
+ * timing; this always walks a fixed number of byte positions and never
+ * short-circuits on the first mismatch.
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  const aBytes = new TextEncoder().encode(a);
+  const bBytes = new TextEncoder().encode(b);
+  const length = Math.max(aBytes.length, bBytes.length, 32);
+  let diff = aBytes.length === bBytes.length ? 0 : 1;
+  for (let i = 0; i < length; i++) {
+    const x = i < aBytes.length ? aBytes[i] : 0;
+    const y = i < bBytes.length ? bBytes[i] : 0;
+    diff |= x ^ y;
+  }
+  return diff === 0;
+}
+
+/**
+ * Strips characters that would let a user-controlled display name break out
+ * of the `"Name" <email>` envelope (e.g. injecting another recipient via a
+ * comma, or a header via a stray CR/LF).
+ */
+function sanitizeDisplayName(name: unknown): string {
+  return String(name ?? "")
+    .replace(/[<>",\r\n]/g, "")
+    .trim();
+}
+
 /** Escapes a value for safe interpolation into HTML. Every template field goes through this. */
 function escapeHtml(value: unknown): string {
   return String(value ?? "")
@@ -116,7 +146,7 @@ Deno.serve(async (req: Request) => {
 
     // ── Auth: either a settings.manage user JWT, or the cron secret header.
     const headerCronSecret = req.headers.get("x-cron-secret") ?? "";
-    let authorized = cronSecret.length > 0 && headerCronSecret.length > 0 && headerCronSecret === cronSecret;
+    let authorized = cronSecret.length > 0 && headerCronSecret.length > 0 && timingSafeEqual(headerCronSecret, cronSecret);
 
     if (!authorized) {
       const token = (req.headers.get("Authorization") ?? "").replace("Bearer ", "");
@@ -144,6 +174,28 @@ Deno.serve(async (req: Request) => {
     }
 
     const configured = resendKey.length > 0 && emailFrom.length > 0;
+
+    // ── Opportunistic maintenance, run on every invocation (status or send):
+    // reclaim rows abandoned mid-send, and expire anything that has been
+    // waiting for a provider for too long. Mirrors retry_failed_emails()'s
+    // stale-`sending` reclaim and the one-off backlog sweep from migration
+    // 20261014060000_payments_email_hardening.sql, so the backlog stays
+    // bounded even if nobody ever calls retry_failed_emails from the portal.
+    const STALE_SENDING_MINUTES = 15;
+    const BACKLOG_EXPIRY_HOURS = 72;
+    const staleSendingCutoff = new Date(Date.now() - STALE_SENDING_MINUTES * 60_000).toISOString();
+    await admin
+      .from("email_outbox")
+      .update({ status: "queued", last_error: "reclaimed after being stuck in sending", send_after: new Date().toISOString() })
+      .eq("status", "sending")
+      .lt("updated_at", staleSendingCutoff);
+
+    const backlogCutoff = new Date(Date.now() - BACKLOG_EXPIRY_HOURS * 60 * 60_000).toISOString();
+    await admin
+      .from("email_outbox")
+      .update({ status: "skipped", last_error: "expired before a provider was configured" })
+      .eq("status", "queued")
+      .lt("created_at", backlogCutoff);
 
     if (action === "status") {
       const counts: Record<string, number> = {};
@@ -192,6 +244,7 @@ Deno.serve(async (req: Request) => {
 
       const html = renderTemplate(claimed.template, claimed.subject, claimed.payload ?? {});
       const attempts = (claimed.attempts ?? 0) + 1;
+      const safeToName = sanitizeDisplayName(claimed.to_name);
 
       try {
         const resendResp = await fetch("https://api.resend.com/emails", {
@@ -199,7 +252,7 @@ Deno.serve(async (req: Request) => {
           headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
           body: JSON.stringify({
             from: emailFrom,
-            to: [claimed.to_name ? `${claimed.to_name} <${claimed.to_email}>` : claimed.to_email],
+            to: [safeToName ? `${safeToName} <${claimed.to_email}>` : claimed.to_email],
             subject: claimed.subject,
             html,
           }),

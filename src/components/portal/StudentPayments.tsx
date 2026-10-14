@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
-  Banknote, Check, Clock, Copy, Loader2, Printer, Receipt, Send, X,
+  Banknote, Clock, Copy, Loader2, Printer, Receipt, Send,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import {
@@ -17,20 +17,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState, Reveal, SectionHeader, StatCard, panelClass } from "../Navigation";
 import { cn } from "@/lib/utils";
+import { money } from "./paymentFormat";
+import PaymentStatusBadge from "./PaymentStatusBadge";
 
 const CATEGORIES = ["Tuition", "Registration", "Exam", "Certificate"];
-
-function money(amount: number, currency: "USD" | "LRD") {
-  const symbol = currency === "USD" ? "$" : "L$";
-  return `${symbol}${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
-}
-
-const STATUS_TONE: Record<PaymentSubmission["status"], string> = {
-  pending: "bg-amber-100 text-amber-800",
-  confirmed: "bg-emerald-100 text-emerald-800",
-  rejected: "bg-rose-100 text-rose-700",
-};
-const STATUS_ICON = { pending: Clock, confirmed: Check, rejected: X };
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -152,47 +142,47 @@ export default function StudentPayments() {
         <SectionHeader title="Report a payment" subtitle="Enter the transaction ID from your mobile money confirmation message." />
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5 sm:col-span-2">
-            <Label>Payment channel</Label>
+            <Label htmlFor="pay-channel">Payment channel</Label>
             <Select value={form.channelId} onValueChange={(v) => setForm((f) => ({ ...f, channelId: v }))}>
-              <SelectTrigger><SelectValue placeholder="Select how you paid" /></SelectTrigger>
+              <SelectTrigger id="pay-channel"><SelectValue placeholder="Select how you paid" /></SelectTrigger>
               <SelectContent>
                 {channels.map((c) => <SelectItem key={c.id} value={c.id}>{PAYMENT_PROVIDER_LABELS[c.provider]} · {c.accountNumber}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Amount</Label>
-            <Input type="number" min="0" step="0.01" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} placeholder="50" />
+            <Label htmlFor="pay-amount">Amount</Label>
+            <Input id="pay-amount" type="number" min="0" step="0.01" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} placeholder="50" />
           </div>
           <div className="space-y-1.5">
-            <Label>Currency</Label>
+            <Label htmlFor="pay-currency">Currency</Label>
             <Select value={form.currency} onValueChange={(v) => setForm((f) => ({ ...f, currency: v as "USD" | "LRD" }))}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger id="pay-currency"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="USD">USD</SelectItem><SelectItem value="LRD">LRD</SelectItem></SelectContent>
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Fee category</Label>
+            <Label htmlFor="pay-category">Fee category</Label>
             <Select value={form.category} onValueChange={(v) => setForm((f) => ({ ...f, category: v }))}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger id="pay-category"><SelectValue /></SelectTrigger>
               <SelectContent>{CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Date paid</Label>
-            <Input type="date" value={form.paidOn} onChange={(e) => setForm((f) => ({ ...f, paidOn: e.target.value }))} />
+            <Label htmlFor="pay-paid-on">Date paid</Label>
+            <Input id="pay-paid-on" type="date" value={form.paidOn} onChange={(e) => setForm((f) => ({ ...f, paidOn: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
-            <Label>Phone used to pay</Label>
-            <Input value={form.payerPhone} onChange={(e) => setForm((f) => ({ ...f, payerPhone: e.target.value }))} placeholder="+231 77 667 9963" />
+            <Label htmlFor="pay-phone">Phone used to pay</Label>
+            <Input id="pay-phone" value={form.payerPhone} onChange={(e) => setForm((f) => ({ ...f, payerPhone: e.target.value }))} placeholder="+231 77 667 9963" />
           </div>
           <div className="space-y-1.5">
-            <Label>Transaction ID</Label>
-            <Input value={form.transactionReference} onChange={(e) => setForm((f) => ({ ...f, transactionReference: e.target.value }))} placeholder="From the confirmation SMS" />
+            <Label htmlFor="pay-reference">Transaction ID</Label>
+            <Input id="pay-reference" value={form.transactionReference} onChange={(e) => setForm((f) => ({ ...f, transactionReference: e.target.value }))} placeholder="From the confirmation SMS" />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
-            <Label>Note (optional)</Label>
-            <Textarea rows={2} value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} />
+            <Label htmlFor="pay-note">Note (optional)</Label>
+            <Textarea id="pay-note" rows={2} value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} />
           </div>
         </div>
         <Button disabled={busy} onClick={() => void submit()} className="mt-4 w-full bg-emerald-700 hover:bg-emerald-800 sm:w-auto">
@@ -207,7 +197,6 @@ export default function StudentPayments() {
         ) : (
           <div className="space-y-3">
             {submissions.map((s) => {
-              const Icon = STATUS_ICON[s.status];
               return (
                 <div key={s.id} className={cn(panelClass, "flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between")}>
                   <div className="min-w-0">
@@ -217,7 +206,7 @@ export default function StudentPayments() {
                     {s.status === "confirmed" && s.receiptNumber && <p className="mt-1 text-xs text-emerald-700">Receipt {s.receiptNumber}</p>}
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge className={cn("flex items-center gap-1 capitalize", STATUS_TONE[s.status])}><Icon className="h-3 w-3" />{s.status}</Badge>
+                    <PaymentStatusBadge status={s.status} />
                     {s.status === "confirmed" && (
                       <Button size="sm" variant="outline" onClick={() => setReceiptId(s.id)}><Printer className="mr-1 h-3.5 w-3.5" /> Receipt</Button>
                     )}

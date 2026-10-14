@@ -1,38 +1,7 @@
 import { supabase } from "../integrations/supabase/client.ts";
+import { mapBlogRow, type BlogPost, type BlogRow, type BlogStatus } from "./blogPublic.ts";
 
-/**
- * Shared blog types. The contract (/code/.plans/public-site-blog-backend-contract.md)
- * requires the admin API (this file) and the public read-only API
- * (src/lib/blogPublic.ts, owned by the public-site stream) to use the exact
- * same `BlogPost`/`BlogStatus` shape. blogPublic.ts now exists; its
- * `BlogPost`/`BlogStatus` are structurally identical to the ones below
- * (verified field-by-field against the `blog_posts` migration). We keep a
- * local copy here rather than importing it because blogPublic.ts uses the
- * `@/*` alias import for the Supabase client, which Node's `--test` runner
- * (via `tsc --noEmit -p tsconfig.tests.json`, NodeNext resolution) cannot
- * resolve without extension-aware path mapping. Both types are structurally
- * compatible, so values pass between the two modules without casts.
- */
-export type BlogStatus = "draft" | "scheduled" | "published" | "archived";
-
-export interface BlogPost {
-  id: string;
-  slug: string;
-  title: string;
-  excerpt: string;
-  body: string;
-  coverImageUrl: string | null;
-  coverImagePath: string | null;
-  category: string;
-  tags: string[];
-  authorId: string | null;
-  authorName: string;
-  status: BlogStatus;
-  featured: boolean;
-  publishedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
+export type { BlogPost, BlogStatus };
 
 /** The subset of fields the editor UI collects for a save. */
 export interface BlogDraftInput {
@@ -54,46 +23,6 @@ export type BlogSaveAction = "draft" | "schedule" | "publish" | "archive";
 
 export type BlogApiClient = typeof import("../integrations/supabase/client.ts")["supabase"];
 type BlogRowsQuery = ReturnType<ReturnType<BlogApiClient["from"]>["select"]>;
-
-interface BlogRow {
-  id: string;
-  slug: string;
-  title: string;
-  excerpt: string;
-  body: string;
-  cover_image_url: string | null;
-  cover_image_path: string | null;
-  category: string;
-  tags: string[] | null;
-  author_id: string | null;
-  author_name: string | null;
-  status: BlogStatus;
-  featured: boolean;
-  published_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export function mapBlogRow(row: BlogRow): BlogPost {
-  return {
-    id: row.id,
-    slug: row.slug,
-    title: row.title,
-    excerpt: row.excerpt,
-    body: row.body,
-    coverImageUrl: row.cover_image_url,
-    coverImagePath: row.cover_image_path,
-    category: row.category,
-    tags: row.tags ?? [],
-    authorId: row.author_id,
-    authorName: row.author_name ?? "",
-    status: row.status,
-    featured: row.featured,
-    publishedAt: row.published_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
 
 /** Translates a Supabase/Postgres error into actionable UI copy. */
 export function explainBlogError(error: { message: string; code?: string } | null): string | null {
@@ -148,10 +77,17 @@ function extensionOf(file: File): string {
   return (fromName || file.type.split("/")[1] || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
 }
 
+/** Previous status/published_at of the post being saved — only relevant to `update()`. */
+interface PreviousStatus {
+  status: BlogStatus;
+  publishedAt: string | null;
+}
+
 function statusPatch(
   action: BlogSaveAction,
   scheduledAt: string | null | undefined,
   now: () => number,
+  previous?: PreviousStatus,
 ): Partial<Pick<BlogRow, "status" | "published_at">> {
   if (action === "draft") return { status: "draft" };
   if (action === "archive") return { status: "archived" };
@@ -160,6 +96,13 @@ function statusPatch(
     const when = new Date(scheduledAt);
     if (Number.isNaN(when.getTime())) throw new Error("Enter a valid publish date and time.");
     return { status: "scheduled", published_at: when.toISOString() };
+  }
+  // action === "publish": a post that is already published keeps its
+  // original published_at — only a transition INTO "published" sets it to
+  // now. Otherwise re-saving an already-live post would bump its publish
+  // date every time it's lightly edited.
+  if (previous?.status === "published" && previous.publishedAt) {
+    return { status: "published", published_at: previous.publishedAt };
   }
   return { status: "published", published_at: new Date(now()).toISOString() };
 }
@@ -198,6 +141,16 @@ export function createBlogApi(client: BlogApiClient, now: () => number = Date.no
     return row;
   }
 
+  /** Best-effort remove; never throws (the row save already succeeded by the time this runs). */
+  async function removeCoverBestEffort(path: string | null | undefined): Promise<void> {
+    if (!path) return;
+    try {
+      await client.storage.from(BLOG_COVER_BUCKET).remove([path]);
+    } catch {
+      /* best effort */
+    }
+  }
+
   return {
     /** Every post regardless of status, newest first; admins see drafts too. */
     async list(filters: { status?: BlogStatus; search?: string } = {}): Promise<BlogPost[]> {
@@ -210,13 +163,6 @@ export function createBlogApi(client: BlogApiClient, now: () => number = Date.no
         }
         return next;
       });
-    },
-
-    async get(id: string): Promise<BlogPost> {
-      const { data, error } = await client.from("blog_posts").select("*").eq("id", id).single();
-      const message = explainBlogError(error);
-      if (message) throw new Error(message);
-      return mapBlogRow(data as BlogRow);
     },
 
     /** Computes a unique slug from a candidate string, excluding `excludeId` from the collision check. */
@@ -248,60 +194,40 @@ export function createBlogApi(client: BlogApiClient, now: () => number = Date.no
       return mapBlogRow(data as BlogRow);
     },
 
-    async update(id: string, draft: Partial<BlogDraftInput>, action: BlogSaveAction, scheduledAt?: string | null): Promise<BlogPost> {
+    /**
+     * `previousStatus` carries the post's status/published_at *before* this
+     * edit, so `statusPatch` can tell "already published, just editing"
+     * apart from "publishing for the first time". `oldCoverPathToDelete`,
+     * when given, is removed from storage only once this update succeeds —
+     * never before, so a failed save never leaves the post without any
+     * cover image on file.
+     */
+    async update(
+      id: string,
+      draft: Partial<BlogDraftInput>,
+      action: BlogSaveAction,
+      scheduledAt?: string | null,
+      previousStatus?: PreviousStatus,
+      oldCoverPathToDelete?: string | null,
+    ): Promise<BlogPost> {
       const changes = toRow(draft);
       if (draft.slug !== undefined || draft.title !== undefined) {
         const candidate = draft.slug?.trim() || draft.title || "";
         if (candidate) changes.slug = await this.ensureUniqueSlug(candidate, id);
       }
-      Object.assign(changes, statusPatch(action, scheduledAt, now));
+      Object.assign(changes, statusPatch(action, scheduledAt, now, previousStatus));
       const { data, error } = await client.from("blog_posts").update(changes).eq("id", id).select().single();
       const message = explainBlogError(error);
       if (message) throw new Error(message);
-      return mapBlogRow(data as BlogRow);
-    },
-
-    /** Quick status-only transitions used from the list view (no editor open). */
-    async publishNow(id: string): Promise<BlogPost> {
-      const { data, error } = await client
-        .from("blog_posts")
-        .update({ status: "published", published_at: new Date(now()).toISOString() })
-        .eq("id", id)
-        .select()
-        .single();
-      const message = explainBlogError(error);
-      if (message) throw new Error(message);
-      return mapBlogRow(data as BlogRow);
-    },
-
-    async schedule(id: string, atIso: string): Promise<BlogPost> {
-      const when = new Date(atIso);
-      if (Number.isNaN(when.getTime())) throw new Error("Enter a valid publish date and time.");
-      const { data, error } = await client
-        .from("blog_posts")
-        .update({ status: "scheduled", published_at: when.toISOString() })
-        .eq("id", id)
-        .select()
-        .single();
-      const message = explainBlogError(error);
-      if (message) throw new Error(message);
-      return mapBlogRow(data as BlogRow);
-    },
-
-    async archive(id: string): Promise<BlogPost> {
-      const { data, error } = await client.from("blog_posts").update({ status: "archived" }).eq("id", id).select().single();
-      const message = explainBlogError(error);
-      if (message) throw new Error(message);
+      await removeCoverBestEffort(oldCoverPathToDelete);
       return mapBlogRow(data as BlogRow);
     },
 
     async remove(id: string, coverImagePath?: string | null): Promise<void> {
-      if (coverImagePath) {
-        try { await client.storage.from(BLOG_COVER_BUCKET).remove([coverImagePath]); } catch { /* best effort */ }
-      }
       const { error } = await client.from("blog_posts").delete().eq("id", id);
       const message = explainBlogError(error);
       if (message) throw new Error(message);
+      await removeCoverBestEffort(coverImagePath);
     },
 
     /** Validates, uploads a cover under `<slug>/<timestamp>.<ext>` and returns its public URL + storage path. */
@@ -316,20 +242,6 @@ export function createBlogApi(client: BlogApiClient, now: () => number = Date.no
       if (error) throw new Error(explainBlogError(error) ?? error.message);
       const { data } = client.storage.from(BLOG_COVER_BUCKET).getPublicUrl(path);
       return { url: data.publicUrl, path };
-    },
-
-    async deleteCover(path: string): Promise<void> {
-      const { error } = await client.storage.from(BLOG_COVER_BUCKET).remove([path]);
-      if (error) throw new Error(explainBlogError(error) ?? error.message);
-    },
-
-    /** Uploads the replacement cover first, then best-effort removes the old one. */
-    async replaceCover(file: File, slug: string, oldPath?: string | null): Promise<{ url: string; path: string }> {
-      const uploaded = await this.uploadCover(file, slug);
-      if (oldPath && oldPath !== uploaded.path) {
-        try { await client.storage.from(BLOG_COVER_BUCKET).remove([oldPath]); } catch { /* best effort */ }
-      }
-      return uploaded;
     },
   };
 }

@@ -123,7 +123,12 @@ export default function HopeAssistant() {
               <p className="truncate text-xs font-bold">{label}</p>
               <p className="truncate text-xs text-emerald-200">Africa of Hope Academy assistant</p>
             </div>
-            <button type="button" onClick={() => setOpen(false)} className="rounded-lg p-1 text-emerald-100 hover:bg-white/10">
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              aria-label="Close assistant"
+              className="grid h-6 w-6 place-items-center rounded-lg text-emerald-100 hover:bg-white/10"
+            >
               <X className="h-[11px] w-[11px]" />
             </button>
           </div>

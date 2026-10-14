@@ -72,11 +72,17 @@ function Shell() {
   const [authTab, setAuthTab] = useState<AuthTab>("signin");
 
   // Apply the CMS-configured academy name / favicon at runtime so a change
-  // published from the CMS shows up without a rebuild.
+  // published from the CMS shows up without a rebuild. Only drives
+  // `document.title` while the portal is active — PublicMarketingSite owns
+  // the title on every public view (Home/Programmes/Blog/post), and this
+  // effect would otherwise race it (both run on mount/update) and clobber
+  // the per-view title back to the bare academy name.
   useEffect(() => {
     const w = state.websiteSettings;
-    const name = w.academyName || state.settings.academyName;
-    if (name) document.title = name;
+    if (site === "portal") {
+      const name = w.academyName || state.settings.academyName;
+      if (name) document.title = name;
+    }
     if (w.faviconUrl) {
       let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
       if (!link) {
@@ -86,7 +92,7 @@ function Shell() {
       }
       link.href = w.faviconUrl;
     }
-  }, [state.websiteSettings, state.settings.academyName]);
+  }, [state.websiteSettings, state.settings.academyName, site]);
 
   return (
     <>
