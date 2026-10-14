@@ -1,25 +1,30 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   GraduationCap, LogIn, Menu, X, Mail, Phone,
   MapPin, Sparkles, Globe, ChevronRight,
+  Award, BookOpen, Clock3,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { Button } from "@/components/ui/button";
 import type { AuthTab } from "./AuthPortal";
 import HeroSlider from "./HeroSlider";
 import { HOME_SECTION_REGISTRY } from "./home/registry";
+import Marquee from "./animata/container/marquee";
+import { programImage } from "@/lib/programImages";
 
 const NAV_LINKS: [string, string][] = [
+  ["#programs", "Programs"],
   ["#about", "About"],
   ["#impact", "Impact"],
   ["#verify", "Verify"],
   ["#admissions", "Admissions"],
 ];
 
-// Programmes live in the portal only (registration wizard + Program Builder).
-// Older CMS menus may still link to the removed homepage section, so drop them.
-const isRemovedLink = (href: string) => /^#programs?$/i.test(href.trim());
+function programDuration(weeks: number) {
+  if (!weeks) return "Duration to be confirmed";
+  return `${weeks} ${weeks === 1 ? "week" : "weeks"}`;
+}
 
 function Crest({ logoUrl }: { logoUrl?: string }) {
   if (logoUrl) {
@@ -44,23 +49,61 @@ function Crest({ logoUrl }: { logoUrl?: string }) {
 export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: (tab?: AuthTab) => void }) {
   const { state } = useApp();
   const { settings, websiteSettings: w } = state;
-  const saved = w.navLinks.filter((l) => !isRemovedLink(l.href));
-  const navLinks =
-    saved.length > 0 ? saved : NAV_LINKS.map(([href, label]) => ({ id: href, href, label }));
+  const saved = w.navLinks.length > 0 ? w.navLinks : NAV_LINKS.map(([href, label]) => ({ id: href, href, label }));
+  const navLinks = saved.some((link) => /^#programs?$/i.test(link.href.trim()))
+    ? saved
+    : [{ id: "nav-programs", href: "#programs", label: "Programs" }, ...saved];
   const displayName = w.academyName || settings.academyName;
   const [menu, setMenu] = useState(false);
   const openApply = () => onEnterPortal("register");
   const openLogin = () => onEnterPortal("signin");
 
   const visibleSections = w.home.order.filter((key) => !w.home.hidden.includes(key));
+  const announcements = state.announcements
+    .filter((announcement) => {
+      const isPublic = !announcement.audience || announcement.audience === "public" || announcement.audience === "all";
+      const isVisibleStatus = !announcement.status || announcement.status === "published" || (
+        announcement.status === "scheduled"
+        && !!announcement.scheduledAt
+        && new Date(announcement.scheduledAt).getTime() <= Date.now()
+      );
+      const isCurrent = !announcement.expiresAt || new Date(announcement.expiresAt).getTime() > Date.now();
+      return isPublic && isVisibleStatus && isCurrent && (announcement.title.trim() || announcement.body.trim());
+    })
+    .map((announcement) => `${announcement.title}${announcement.body ? ` — ${announcement.body}` : ""}`);
+  const bannerItems = announcements.length > 0
+    ? announcements
+    : w.announcementText.trim() ? [w.announcementText.trim()] : [];
+
+  // The section is rendered by React, so restore a #programs deep-link once it
+  // exists in the document instead of relying on the browser's initial lookup.
+  useEffect(() => {
+    if (window.location.hash === "#programs") {
+      document.getElementById("programs")?.scrollIntoView();
+    }
+  }, []);
 
   return (
     <div id="top" className="min-h-[100dvh] scroll-smooth bg-[#f6f8f7] text-slate-900">
-      {w.announcementEnabled && w.announcementText && (
-        <div className="bg-amber-400 text-emerald-950">
-          <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 py-2 text-xs font-medium">
+      {(announcements.length > 0 || w.announcementEnabled) && bannerItems.length > 0 && (
+        <div className="overflow-hidden bg-amber-400 text-emerald-950" role="region" aria-label="Announcements">
+          <div className="sr-only" aria-live="polite">
+            {bannerItems.join(". ")}
+          </div>
+          <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 py-2" aria-hidden="true">
             <Sparkles className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{w.announcementText}</span>
+            <Marquee
+              repeat={2}
+              pauseOnHover
+              applyMask={false}
+              className="min-w-0 overflow-hidden p-0 text-xs font-medium [--duration:32s] [--gap:3rem]"
+            >
+              {bannerItems.map((item, index) => (
+                <span key={`${item}-${index}`} className="whitespace-nowrap">
+                  {item}
+                </span>
+              ))}
+            </Marquee>
           </div>
         </div>
       )}
@@ -159,6 +202,65 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
 
       <HeroSlider onOpenApply={openApply} onEnterPortal={openLogin} />
 
+      <section id="programs" className="scroll-mt-20 border-y border-emerald-900/10 bg-white py-16 sm:py-20">
+        <div className="mx-auto max-w-6xl px-4">
+          <div className="max-w-2xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Explore our programmes</p>
+            <h2 className="mt-3 text-3xl font-bold tracking-tight text-emerald-950 sm:text-4xl">Build practical skills for the work ahead.</h2>
+            <p className="mt-4 text-sm leading-6 text-slate-600 sm:text-base">
+              Choose from our current catalogue of certificate programmes and start your application online.
+            </p>
+          </div>
+
+          {state.programs.length > 0 ? (
+            <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {state.programs.map((program) => (
+                <article key={program.id} className="group flex h-full flex-col overflow-hidden rounded-2xl border border-emerald-900/10 bg-white shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
+                  <img
+                    src={programImage(program)}
+                    alt=""
+                    className="h-44 w-full object-cover"
+                    loading="lazy"
+                  />
+                  <div className="flex flex-1 flex-col p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">{program.category || "Certificate programme"}</p>
+                      <BookOpen className="h-4 w-4 shrink-0 text-amber-500" aria-hidden="true" />
+                    </div>
+                    <h3 className="mt-2 text-lg font-semibold text-emerald-950">{program.title}</h3>
+                    <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-600">{program.description || "Programme details will be available soon."}</p>
+                    <dl className="mt-5 space-y-2 border-t border-emerald-900/10 pt-4 text-sm text-slate-600">
+                      <div className="flex items-center gap-2">
+                        <Clock3 className="h-4 w-4 shrink-0 text-emerald-700" aria-hidden="true" />
+                        <dt className="sr-only">Duration</dt>
+                        <dd>{programDuration(program.durationWeeks)}</dd>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Award className="h-4 w-4 shrink-0 text-emerald-700" aria-hidden="true" />
+                        <dt className="sr-only">Certification</dt>
+                        <dd>{program.certification || "Certificate on completion"}</dd>
+                      </div>
+                    </dl>
+                    <Button onClick={openApply} className="mt-5 w-full bg-emerald-800 text-white hover:bg-emerald-700">
+                      Apply for this programme <ChevronRight className="ml-1 h-4 w-4" />
+                    </Button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-10 rounded-2xl border border-dashed border-emerald-900/20 bg-emerald-50/60 p-8 text-center">
+              <BookOpen className="mx-auto h-6 w-6 text-emerald-700" aria-hidden="true" />
+              <p className="mt-3 font-medium text-emerald-950">Our current programme catalogue is being updated.</p>
+              <p className="mt-1 text-sm text-slate-600">Please check back soon or apply online to speak with admissions.</p>
+              <Button onClick={openApply} variant="outline" className="mt-5 border-emerald-800 text-emerald-800 hover:bg-emerald-100">
+                Apply online
+              </Button>
+            </div>
+          )}
+        </div>
+      </section>
+
       {visibleSections.map((key) => {
         const Section = HOME_SECTION_REGISTRY[key];
         return (
@@ -182,9 +284,11 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
             <p className="flex items-center gap-2 text-sm">
               <Phone className="h-4 w-4 shrink-0 text-amber-400" /> {w.contactPhone || settings.contactPhone}
             </p>
-            <p className="flex items-center gap-2 text-sm">
-              <Mail className="h-4 w-4 shrink-0 text-amber-400" /> {w.contactEmail || settings.contactEmail}
-            </p>
+            {(w.contactEmail || settings.contactEmail) && (
+              <p className="flex items-center gap-2 text-sm">
+                <Mail className="h-4 w-4 shrink-0 text-amber-400" /> {w.contactEmail || settings.contactEmail}
+              </p>
+            )}
             {w.officeHours && (
               <p className="flex items-center gap-2 text-sm">
                 <Globe className="h-4 w-4 shrink-0 text-amber-400" /> {w.officeHours}

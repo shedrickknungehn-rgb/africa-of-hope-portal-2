@@ -15,6 +15,7 @@ import {
   Globe,
   UserCircle,
   FileQuestion,
+  CalendarRange,
   type LucideIcon,
 } from "lucide-react";
 import { useApp } from "./context/AppContext";
@@ -33,7 +34,6 @@ import {
   StudentPortal,
   StudentAssignments,
   FeeRegister,
-  AnnouncementBoard,
 } from "./components/StudentFinancialViews";
 import { CertificateStudio, VerificationPortal } from "./components/CertificateVerification";
 import AdminSystemSettings from "./components/AdminSystemSettings";
@@ -43,6 +43,8 @@ import RolesPermissions from "./components/RolesPermissions";
 import PeopleManagement from "./components/PeopleManagement";
 import QuizBuilder from "./components/quiz/QuizBuilder";
 import StudentQuizzes from "./components/quiz/StudentQuizzes";
+import AcademicPlanning from "./components/AcademicPlanning";
+import AnnouncementManager from "./components/AnnouncementManager";
 
 /** Everything a view's `visible`/`render` function needs, computed once per render. */
 export interface PortalViewContext extends PermissionsApi {
@@ -109,6 +111,13 @@ export const PORTAL_VIEWS: PortalView[] = [
     render: () => <RolesPermissions />,
   },
   {
+    key: "academic-planning",
+    label: (ctx) => ctx.role === "Student" ? "My Course Plan" : ctx.role === "Teacher" ? "Course Planning" : "Academic Approvals",
+    icon: CalendarRange,
+    visible: (ctx) => ctx.canAny("courses.enroll", "academic_plans.manage", "academic_plans.approve"),
+    render: () => <AcademicPlanning />,
+  },
+  {
     key: "quizzes",
     label: "Quizzes",
     icon: FileQuestion,
@@ -169,7 +178,7 @@ export const PORTAL_VIEWS: PortalView[] = [
     label: "Bulletin Board",
     icon: Megaphone,
     visible: () => true,
-    render: () => <AnnouncementBoard />,
+    render: () => <AnnouncementManager />,
   },
   {
     key: "website",
