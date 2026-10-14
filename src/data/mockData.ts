@@ -150,7 +150,6 @@ export const defaultWebsiteSettings = {
     { id: "soc-4", platform: "X", url: "https://x.com" },
   ],
   navLinks: [
-    { id: "nav-1", label: "Programmes", href: "#programs" },
     { id: "nav-2", label: "About", href: "#about" },
     { id: "nav-3", label: "Impact", href: "#impact" },
     { id: "nav-4", label: "Verify", href: "#verify" },

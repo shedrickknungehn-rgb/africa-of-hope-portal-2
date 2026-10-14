@@ -1,10 +1,10 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
-  ArrowRight, Award, BadgeCheck, Briefcase, CalendarCheck, Clock, GraduationCap,
-  Handshake, Search, ShieldCheck, Sparkles, Star, Target, TrendingUp, Users, XCircle,
+  ArrowRight, Award, BadgeCheck, Briefcase, CalendarCheck, Clock,
+  Handshake, Search, ShieldCheck, Star, Target, TrendingUp, Users, XCircle,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
-import type { Program, SystemSettings } from "../types";
+import type { SystemSettings } from "../types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,130 +30,6 @@ const TESTIMONIALS: [string, string, string][] = [
 ];
 
 const PARTNERS = ["Lagos Tech Hub", "Savannah Energy", "Nimbus Cloud", "Kano Health Trust", "Umoja Bank", "Accra Digital Works"];
-
-export function ProgramsSection({
-  programs, featuredIds, onApply,
-}: {
-  programs: Program[];
-  featuredIds: string[];
-  onApply: (p: Program) => void;
-}) {
-  const [category, setCategory] = useState("All");
-
-  const categories = useMemo(
-    () => ["All", ...Array.from(new Set(programs.map((p) => p.category)))],
-    [programs],
-  );
-
-  const visible = category === "All" ? programs : programs.filter((p) => p.category === category);
-
-  return (
-    <section id="programs" className="scroll-mt-24 bg-[#f6f8f7] py-16 sm:py-20">
-      <div className="mx-auto max-w-6xl px-4">
-        <Reveal>
-          <SectionHeader
-            title="Certificate programmes"
-            subtitle="Practical, cohort-based training with transparent tuition and certification."
-            action={
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1.5 text-[11px] font-semibold text-emerald-900">
-                <Sparkles className="h-3.5 w-3.5" /> {programs.length} programmes available
-              </span>
-            }
-          />
-        </Reveal>
-
-        <div className="mt-6 flex flex-wrap gap-2">
-          {categories.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => setCategory(c)}
-              className={
-                category === c
-                  ? "rounded-full bg-emerald-800 px-4 py-2 text-xs font-semibold text-white shadow-sm"
-                  : "rounded-full border border-emerald-900/10 bg-white px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-900"
-              }
-            >
-              {c}
-            </button>
-          ))}
-        </div>
-
-        {visible.length === 0 ? (
-          <div className="mt-8 rounded-2xl border border-dashed border-emerald-900/15 bg-white/70 p-10 text-center">
-            <GraduationCap className="mx-auto mb-3 h-8 w-8 text-emerald-700/60" />
-            <p className="text-sm font-medium text-slate-700">No programmes published in this category yet.</p>
-          </div>
-        ) : (
-          <div className="mt-8 grid gap-5 md:grid-cols-2">
-            {visible.map((p, i) => {
-              const isFeatured = featuredIds.includes(p.id);
-              return (
-                <Reveal key={p.id} delay={i * 0.05} className="h-full">
-                  <article className="flex h-full flex-col rounded-2xl border border-emerald-900/10 bg-white p-5 shadow-sm shadow-emerald-900/5 transition hover:-translate-y-0.5 hover:shadow-md">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">{p.category}</p>
-                        <h3 className="mt-1 text-lg font-semibold tracking-tight text-slate-900">{p.title}</h3>
-                      </div>
-                      {isFeatured && (
-                        <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-800">
-                          Featured
-                        </span>
-                      )}
-                    </div>
-
-                    <p className="mt-3 text-sm text-slate-600">{p.description}</p>
-
-                    <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-                      <div className="rounded-xl bg-emerald-50 p-2.5">
-                        <p className="text-[10px] uppercase tracking-wide text-emerald-800/70">Duration</p>
-                        <p className="text-sm font-semibold text-emerald-900">{Math.round(p.durationWeeks / 4)} Mo ({p.durationWeeks} Wks)</p>
-                      </div>
-                      <div className="rounded-xl bg-emerald-50 p-2.5">
-                        <p className="text-[10px] uppercase tracking-wide text-emerald-800/70">Tuition</p>
-                        <p className="text-sm font-semibold text-emerald-900">${p.tuition}</p>
-                      </div>
-                      <div className="rounded-xl bg-emerald-50 p-2.5">
-                        <p className="text-[10px] uppercase tracking-wide text-emerald-800/70">Award</p>
-                        <p className="truncate text-sm font-semibold text-emerald-900">{p.certification.split(" ")[0]}</p>
-                      </div>
-                    </div>
-
-                    <details className="mt-3 rounded-xl bg-slate-50 p-3">
-                      <summary className="cursor-pointer text-xs font-semibold text-emerald-800">
-                        Curriculum and entry requirements
-                      </summary>
-                      <ul className="mt-2 space-y-1.5">
-                        {p.modules.map((m) => (
-                          <li key={m.id} className="flex gap-2 text-xs text-slate-600">
-                            <span className="shrink-0 rounded-md bg-white px-1.5 py-0.5 font-semibold text-emerald-900 ring-1 ring-emerald-900/10">
-                              {m.weeks}w
-                            </span>
-                            <span>
-                              <span className="font-medium text-slate-800">{m.title}</span> — {m.summary}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                      <p className="mt-3 text-xs text-slate-500">Entry: {p.entryRequirements}</p>
-                    </details>
-
-                    <div className="mt-auto pt-4">
-                      <Button onClick={() => onApply(p)} className="w-full bg-emerald-700 hover:bg-emerald-800">
-                        Apply for this programme <ArrowRight className="ml-1.5 h-4 w-4" />
-                      </Button>
-                    </div>
-                  </article>
-                </Reveal>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
 
 export function AboutSection({ settings }: { settings: SystemSettings }) {
   const { state } = useApp();
@@ -400,7 +276,7 @@ export function AdmissionsFaqSection({
   settings, onApply,
 }: {
   settings: SystemSettings;
-  onApply: (p?: Program) => void;
+  onApply: () => void;
 }) {
   const { state } = useApp();
   const [inquiry, setInquiry] = useState({ name: "", email: "", message: "" });

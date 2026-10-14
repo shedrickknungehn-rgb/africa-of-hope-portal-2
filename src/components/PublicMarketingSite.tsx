@@ -1,34 +1,27 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   GraduationCap, LogIn, Menu, X, Mail, Phone,
-  MapPin, Sparkles, Globe, CheckCircle2, ChevronRight,
+  MapPin, Sparkles, Globe, ChevronRight,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
-import type { Program } from "../types";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
-import { toast } from "sonner";
-import { Reveal } from "./Navigation";
+import type { AuthTab } from "./AuthPortal";
 import HeroSlider from "./HeroSlider";
 import {
-  AboutSection, AdmissionsFaqSection, ImpactSection, ProgramsSection, VerificationSection,
+  AboutSection, AdmissionsFaqSection, ImpactSection, VerificationSection,
 } from "./MarketingSections";
 
 const NAV_LINKS: [string, string][] = [
-  ["#programs", "Programmes"],
   ["#about", "About"],
   ["#impact", "Impact"],
   ["#verify", "Verify"],
   ["#admissions", "Admissions"],
 ];
 
-
+// Programmes live in the portal only (registration wizard + Program Builder).
+// Older CMS menus may still link to the removed homepage section, so drop them.
+const isRemovedLink = (href: string) => /^#programs?$/i.test(href.trim());
 
 function Crest({ logoUrl }: { logoUrl?: string }) {
   if (logoUrl) {
@@ -50,55 +43,16 @@ function Crest({ logoUrl }: { logoUrl?: string }) {
   );
 }
 
-export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: () => void }) {
-  const { state, registerStudent } = useApp();
-  const { settings, programs, websiteSettings: w } = state;
+export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: (tab?: AuthTab) => void }) {
+  const { state } = useApp();
+  const { settings, websiteSettings: w } = state;
+  const saved = w.navLinks.filter((l) => !isRemovedLink(l.href));
   const navLinks =
-    w.navLinks.length > 0
-      ? w.navLinks
-      : NAV_LINKS.map(([href, label]) => ({ id: href, href, label }));
+    saved.length > 0 ? saved : NAV_LINKS.map(([href, label]) => ({ id: href, href, label }));
   const displayName = w.academyName || settings.academyName;
   const [menu, setMenu] = useState(false);
-  const [applyOpen, setApplyOpen] = useState(false);
-  const [applyProgram, setApplyProgram] = useState<Program | null>(null);
-  const [form, setForm] = useState({ name: "", email: "", phone: "", note: "" });
-
-  const featured = useMemo(() => {
-    const ids = settings.featuredProgramIds ?? [];
-    const picked = ids
-      .map((id) => programs.find((p) => p.id === id))
-      .filter((p): p is Program => Boolean(p));
-    return picked.length > 0 ? picked : programs;
-  }, [programs, settings.featuredProgramIds]);
-
-  const openApply = (program?: Program) => {
-    const chosen = program ?? featured[0] ?? null;
-    setApplyProgram(chosen);
-    setForm({ name: "", email: "", phone: "", note: "" });
-    setApplyOpen(true);
-  };
-
-  const submitApply = () => {
-    if (!form.name.trim() || !form.email.trim() || !form.phone.trim()) {
-      toast.error("Full name, email and phone number are required");
-      return;
-    }
-    if (!applyProgram) {
-      toast.error("Select the programme you want to join");
-      return;
-    }
-    registerStudent({
-      name: form.name.trim(),
-      email: form.email.trim(),
-      phone: form.phone.trim(),
-      programIds: [applyProgram.id],
-      note: form.note.trim(),
-      documents: "",
-    });
-    toast.success("Application received. The registrar will contact you shortly.");
-    setApplyOpen(false);
-    onEnterPortal();
-  };
+  const openApply = () => onEnterPortal("register");
+  const openLogin = () => onEnterPortal("signin");
 
   return (
     <div id="top" className="min-h-[100dvh] scroll-smooth bg-[#f6f8f7] text-slate-900">
@@ -130,7 +84,7 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-2 lg:ml-2">
-            <Button onClick={onEnterPortal} className="h-10 bg-amber-400 text-emerald-950 hover:bg-amber-300">
+            <Button onClick={openLogin} className="h-10 bg-amber-400 text-emerald-950 hover:bg-amber-300">
               <LogIn className="mr-1.5 h-4 w-4" /> Portal login
             </Button>
             <button
@@ -196,9 +150,8 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
         )}
       </AnimatePresence>
 
-      <HeroSlider onOpenApply={() => openApply()} onEnterPortal={onEnterPortal} />
+      <HeroSlider onOpenApply={openApply} onEnterPortal={openLogin} />
 
-      <ProgramsSection programs={programs} featuredIds={settings.featuredProgramIds} onApply={openApply} />
       <AboutSection settings={settings} />
       <ImpactSection />
       <VerificationSection />
@@ -250,7 +203,7 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
                 </button>
               </li>
               <li>
-                <button type="button" onClick={onEnterPortal} className="inline-flex items-center gap-1.5 transition hover:text-emerald-800">
+                <button type="button" onClick={openLogin} className="inline-flex items-center gap-1.5 transition hover:text-emerald-800">
                   <ChevronRight className="h-3.5 w-3.5" /> Portal login
                 </button>
               </li>
@@ -292,65 +245,6 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
         </div>
       </footer>
 
-      <Dialog open={applyOpen} onOpenChange={setApplyOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Apply for admission</DialogTitle>
-            <DialogDescription>
-              Submit your details and the registrar will review your application for the {settings.academicYear} intake.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="apply-program">Programme</Label>
-              <select
-                id="apply-program"
-                value={applyProgram?.id ?? ""}
-                onChange={(e) => setApplyProgram(programs.find((p) => p.id === e.target.value) ?? null)}
-                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/15"
-              >
-                <option value="">Select a programme</option>
-                {programs.map((p) => (
-                  <option key={p.id} value={p.id}>{p.title}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="apply-name">Full name</Label>
-              <Input id="apply-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Blessing Okafor" />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="apply-email">Email</Label>
-                <Input id="apply-email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="you@example.com" />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="apply-phone">Phone</Label>
-                <Input id="apply-phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+234 800 000 0000" />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="apply-note">Why this programme?</Label>
-              <Textarea
-                id="apply-note"
-                rows={3}
-                value={form.note}
-                onChange={(e) => setForm({ ...form, note: e.target.value })}
-                placeholder="Share your motivation and availability"
-              />
-            </div>
-            <p className="rounded-xl bg-emerald-50 p-3 text-[11px] text-emerald-900">
-              Applications are free. Selected candidates are invited to enrol at the registrar desk before the first lesson.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setApplyOpen(false)}>Cancel</Button>
-            <Button onClick={submitApply} className="bg-emerald-700 hover:bg-emerald-800">
-              <CheckCircle2 className="mr-1.5 h-4 w-4" /> Submit application
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

@@ -53,15 +53,44 @@ export interface RegistrationPayload {
   documents: string;
 }
 
+export interface SignUpPayload extends RegistrationPayload {
+  password: string;
+}
+
+export interface SignUpResult {
+  error: string | null;
+  /**
+   * signed_in: account created and session started.
+   * confirm_email: account created, applicant must confirm their email first.
+   */
+  status?: "signed_in" | "confirm_email";
+}
+
+export interface ProfilePatch {
+  name?: string;
+  phone?: string;
+  title?: string;
+  bio?: string;
+  address?: string;
+  dateOfBirth?: string;
+  avatarUrl?: string | null;
+}
+
 interface AppContextValue {
   state: AppState;
   currentUser: User | null;
   loading: boolean;
   live: boolean;
   refresh: () => Promise<void>;
-  login: (emailOrUserId: string, password?: string) => void;
+  /** Resolves to an error message, or null on success. */
+  login: (emailOrUserId: string, password?: string) => Promise<string | null>;
   logout: () => void;
   registerStudent: (payload: RegistrationPayload) => void;
+  signUpStudent: (payload: SignUpPayload) => Promise<SignUpResult>;
+  requestPasswordReset: (email: string) => Promise<string | null>;
+  changePassword: (password: string) => Promise<string | null>;
+  updateProfile: (id: string, patch: ProfilePatch) => Promise<string | null>;
+  setProgramImage: (id: string, imageUrl: string | null) => Promise<string | null>;
   approveApplicant: (id: string) => void;
   rejectApplicant: (id: string) => void;
   toggleStudentStatus: (id: string) => void;
@@ -87,6 +116,13 @@ interface AppContextValue {
   clearTransactionalData: () => void;
   importSystemData: (data: Partial<AppState>) => void;
   resetDemoData: () => void;
+}
+
+/** Explains errors caused by the profile/programme-image migration not being applied yet. */
+function migrationHint(message: string, feature: string): string {
+  return /column .* does not exist|schema cache/i.test(message)
+    ? `${feature} are not set up yet. Ask an administrator to apply the latest database migration.`
+    : message;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -228,34 +264,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
       push(label, supabase.from("profiles").update(patch).eq("id", id));
     };
 
-    return {
+    const value: AppContextValue = {
       state,
       currentUser,
       loading,
       live,
       refresh,
-      login: (emailOrUserId, password) => {
+      login: async (emailOrUserId, password) => {
         const existing = state.users.find((u) => u.id === emailOrUserId);
         if (!password) {
           if (existing) {
             setActiveUserId(existing.id);
             toast.success(`Signed in as ${existing.name}`);
-          } else {
-            toast.error("Enter your portal password to sign in.");
+            return null;
           }
-          return;
+          toast.error("Enter your portal password to sign in.");
+          return "Enter your portal password to sign in.";
         }
-        void supabase.auth
-          .signInWithPassword({ email: emailOrUserId.trim(), password })
-          .then(({ data, error }) => {
-            if (error) {
-              toast.error(error.message);
-              return;
-            }
-            setSessionUserId(data.user?.id ?? null);
-            toast.success("Welcome back to the portal.");
-            void refresh();
-          });
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: emailOrUserId.trim(),
+          password,
+        });
+        if (error) {
+          toast.error(error.message);
+          return error.message;
+        }
+        setSessionUserId(data.user?.id ?? null);
+        toast.success("Welcome back to the portal.");
+        void refresh();
+        return null;
       },
       logout: () => {
         setActiveUserId(null);
@@ -295,6 +332,101 @@ export function AppProvider({ children }: { children: ReactNode }) {
             documents: record.documents,
           }),
         );
+      },
+      signUpStudent: async ({ password, ...payload }) => {
+        const email = payload.email.trim().toLowerCase();
+        const details = {
+          phone: payload.phone,
+          program_ids: payload.programIds,
+          note: payload.note,
+          documents: payload.documents,
+        };
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: window.location.origin,
+            data: { full_name: payload.name, ...details },
+          },
+        });
+        if (error) {
+          if (/sign ?ups? (are )?(not allowed|disabled)/i.test(error.message)) {
+            return { error: "Online registration is currently unavailable. Please contact the admissions office." };
+          }
+          return { error: error.message };
+        }
+        // Supabase hides existing accounts by returning a user with no identities.
+        if (data.user && (data.user.identities ?? []).length === 0) {
+          return {
+            error: "An account with this email already exists. Sign in instead.",
+          };
+        }
+        if (data.session && data.user) {
+          // Older signup triggers only copy the name; store the remaining details now.
+          await supabase
+            .from("profiles")
+            .update({ name: payload.name, full_name: payload.name, ...details })
+            .eq("id", data.user.id);
+          setSessionUserId(data.user.id);
+          await refresh();
+          return { error: null, status: "signed_in" };
+        }
+        return { error: null, status: "confirm_email" };
+      },
+      requestPasswordReset: async (email) => {
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo: window.location.origin,
+        });
+        return error?.message ?? null;
+      },
+      changePassword: async (password) => {
+        const { error } = await supabase.auth.updateUser({ password });
+        return error?.message ?? null;
+      },
+      updateProfile: async (id, patch) => {
+        const row: Row = {};
+        if (patch.name !== undefined) {
+          row.name = patch.name;
+          row.full_name = patch.name;
+        }
+        if (patch.phone !== undefined) row.phone = patch.phone;
+        if (patch.title !== undefined) row.title = patch.title || null;
+        if (patch.bio !== undefined) row.bio = patch.bio || null;
+        if (patch.address !== undefined) row.address = patch.address || null;
+        if (patch.dateOfBirth !== undefined) row.date_of_birth = patch.dateOfBirth || null;
+        if (patch.avatarUrl !== undefined) row.avatar_url = patch.avatarUrl;
+        const { data, error } = await supabase.from("profiles").update(row).eq("id", id).select("id");
+        if (error) {
+          return migrationHint(error.message, "Profile fields");
+        }
+        if (!data?.length) return "You do not have permission to edit this profile. Sign in again and retry.";
+        const local: Partial<User> = {
+          ...(patch.name !== undefined && { name: patch.name }),
+          ...(patch.phone !== undefined && { phone: patch.phone }),
+          ...(patch.title !== undefined && { title: patch.title || undefined }),
+          ...(patch.bio !== undefined && { bio: patch.bio || undefined }),
+          ...(patch.address !== undefined && { address: patch.address || undefined }),
+          ...(patch.dateOfBirth !== undefined && { dateOfBirth: patch.dateOfBirth || undefined }),
+          ...(patch.avatarUrl !== undefined && { avatarUrl: patch.avatarUrl || undefined }),
+        };
+        setState((s) => ({ ...s, users: s.users.map((u) => (u.id === id ? { ...u, ...local } : u)) }));
+        return null;
+      },
+      setProgramImage: async (id, imageUrl) => {
+        const { data, error } = await supabase
+          .from("programs")
+          .update({ image_url: imageUrl })
+          .eq("id", id)
+          .select("id");
+        if (error) {
+          return migrationHint(error.message, "Programme images");
+        }
+        if (!data?.length) return "You do not have permission to edit this programme.";
+        setState((s) => ({
+          ...s,
+          programs: s.programs.map((p) => (p.id === id ? { ...p, imageUrl: imageUrl ?? undefined } : p)),
+        }));
+        return null;
       },
       approveApplicant: (id) =>
         patchUser(
@@ -597,6 +729,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         toast.success("Portal reloaded from the live database.");
       },
     };
+    return value;
   }, [state, sessionUserId, activeUserId, loading, live, refresh]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

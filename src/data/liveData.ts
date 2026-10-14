@@ -41,6 +41,10 @@ function mapUser(p: Row, cohortIds: string[]): User {
     cohortIds,
     note: p.note ? txt(p.note) : undefined,
     documents: p.documents ? txt(p.documents) : undefined,
+    avatarUrl: p.avatar_url ? txt(p.avatar_url) : undefined,
+    bio: p.bio ? txt(p.bio) : undefined,
+    address: p.address ? txt(p.address) : undefined,
+    dateOfBirth: p.date_of_birth ? txt(p.date_of_birth).slice(0, 10) : undefined,
   };
 }
 
@@ -168,6 +172,7 @@ export async function fetchState(): Promise<AppState> {
     certification: txt(p.certification),
     description: txt(p.description),
     entryRequirements: txt(p.entry_requirements),
+    imageUrl: p.image_url ? txt(p.image_url) : undefined,
     modules: moduleRows
       .filter((m) => txt(m.program_id) === txt(p.id))
       .sort((a, b) => num(a, "position") - num(b, "position"))

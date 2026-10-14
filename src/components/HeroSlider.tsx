@@ -14,6 +14,7 @@ import {
   Sparkles,
   ShieldCheck,
   BadgeCheck,
+  LogIn,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 
@@ -269,19 +270,19 @@ export default function HeroSlider({ onOpenApply, onEnterPortal }: HeroSliderPro
               >
                 Apply Online <ArrowRight className="h-4 w-4" />
               </button>
-              <a
-                href="#programs"
-                className="inline-flex h-11 items-center gap-2 rounded-xl border border-white/25 bg-white/5 px-5 text-sm font-semibold text-white backdrop-blur-sm transition hover:bg-white/15 active:scale-[0.98]"
-              >
-                Explore Programs
-              </a>
               <button
                 type="button"
                 onClick={onEnterPortal}
+                className="inline-flex h-11 items-center gap-2 rounded-xl border border-white/25 bg-white/5 px-5 text-sm font-semibold text-white backdrop-blur-sm transition hover:bg-white/15 active:scale-[0.98]"
+              >
+                <LogIn className="h-4 w-4" /> Portal Login
+              </button>
+              <a
+                href="#verify"
                 className="inline-flex h-11 items-center gap-2 rounded-xl px-3 text-sm font-semibold text-emerald-100 underline-offset-4 transition hover:text-white hover:underline"
               >
                 <ShieldCheck className="h-4 w-4" /> Verify Certificate
-              </button>
+              </a>
             </motion.div>
           </motion.div>
         </AnimatePresence>

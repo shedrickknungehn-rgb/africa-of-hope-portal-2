@@ -19,6 +19,10 @@ export interface User {
   cohortIds: string[];
   note?: string;
   documents?: string;
+  avatarUrl?: string;
+  bio?: string;
+  address?: string;
+  dateOfBirth?: string;
 }
 
 export interface Module {
@@ -38,6 +42,7 @@ export interface Program {
   description: string;
   entryRequirements: string;
   modules: Module[];
+  imageUrl?: string;
 }
 
 export interface Cohort {
