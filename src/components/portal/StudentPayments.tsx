@@ -97,7 +97,7 @@ export default function StudentPayments() {
   const receipt = useMemo(() => submissions.find((s) => s.id === receiptId) ?? null, [submissions, receiptId]);
 
   const pendingCount = submissions.filter((s) => s.status === "pending").length;
-  const confirmedTotal = submissions.filter((s) => s.status === "confirmed").reduce((sum, s) => sum + (s.currency === "USD" ? s.amount : 0), 0);
+  const confirmedTotal = submissions.filter((s) => s.status === "confirmed").reduce((sum, s) => sum + (s.ledgerAmountUsd ?? (s.currency === "USD" ? s.amount : 0)), 0);
 
   return (
     <div className="space-y-5">

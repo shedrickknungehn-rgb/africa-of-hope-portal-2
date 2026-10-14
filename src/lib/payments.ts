@@ -211,10 +211,9 @@ export function explainPaymentError(error: { message: string; code?: string } | 
 
 /** Loosely validates a Liberian mobile number: optional +231/231/0 prefix, 7-15 digits after it. */
 export function isValidPaymentPhone(input: string): boolean {
-  const cleaned = input.trim().replace(/[\s().-]/g, "");
-  if (!cleaned) return false;
-  const body = cleaned.replace(/^\+?231/, "").replace(/^0/, "");
-  return /^\d{7,15}$/.test(body) || /^\d{7,15}$/.test(cleaned.replace(/^\+/, ""));
+  // Mirrors submit_payment: strip spaces and dashes, then 7-15 digits with an optional leading +.
+  const cleaned = input.trim().replace(/[\s-]/g, "");
+  return /^\+?[0-9]{7,15}$/.test(cleaned);
 }
 
 /** The DB trims and upper-cases the reference; this mirrors its 4..64 char length check. */

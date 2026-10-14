@@ -59,6 +59,9 @@ test("isValidPaymentPhone accepts loosely-formatted Liberian numbers and rejects
   assert.equal(isValidPaymentPhone("231776679963"), true);
   assert.equal(isValidPaymentPhone("0776679963"), true);
   assert.equal(isValidPaymentPhone("077-667-9963"), true);
+  assert.equal(isValidPaymentPhone("077 667 9963"), true);
+  // The server strips only spaces and dashes, so the client must reject other punctuation.
+  assert.equal(isValidPaymentPhone("(077) 667.9963"), false);
   assert.equal(isValidPaymentPhone(""), false);
   assert.equal(isValidPaymentPhone("abc"), false);
   assert.equal(isValidPaymentPhone("12"), false);

@@ -103,6 +103,9 @@ function renderTemplate(template: string, subject: string, payload: Record<strin
     const rows = [
       detailRow("Receipt number", payload.receipt_number),
       detailRow("Amount", `${String(payload.currency ?? "")} ${String(payload.amount ?? "")}`.trim()),
+      payload.currency === "LRD" && payload.ledger_amount_usd != null
+        ? detailRow("Credited to fee account", `USD ${String(payload.ledger_amount_usd)}`)
+        : "",
       detailRow("Category", payload.category),
       detailRow("Method", payload.method),
       detailRow("Paid on", payload.paid_on),
@@ -190,12 +193,16 @@ Deno.serve(async (req: Request) => {
       .eq("status", "sending")
       .lt("updated_at", staleSendingCutoff);
 
-    const backlogCutoff = new Date(Date.now() - BACKLOG_EXPIRY_HOURS * 60 * 60_000).toISOString();
-    await admin
-      .from("email_outbox")
-      .update({ status: "skipped", last_error: "expired before a provider was configured" })
-      .eq("status", "queued")
-      .lt("created_at", backlogCutoff);
+    // Only expire the backlog while no provider is configured. Once a
+    // provider exists, "Retry failed" must be able to resend older rows.
+    if (!configured) {
+      const backlogCutoff = new Date(Date.now() - BACKLOG_EXPIRY_HOURS * 60 * 60_000).toISOString();
+      await admin
+        .from("email_outbox")
+        .update({ status: "skipped", last_error: "expired before a provider was configured" })
+        .eq("status", "queued")
+        .lt("created_at", backlogCutoff);
+    }
 
     if (action === "status") {
       const counts: Record<string, number> = {};
