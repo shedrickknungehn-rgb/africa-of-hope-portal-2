@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -182,11 +183,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [live, setLive] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
+  // Latest state for refresh(), which keeps slices the visitor cannot read.
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
   const refresh = useCallback(async () => {
     try {
-      const next = await fetchState();
+      const { state: next, failed } = await fetchState(stateRef.current);
       setState(next);
       setLive(true);
+      if (failed.length) {
+        // Visitors are expected to lack access to private tables; only log it.
+        console.warn(`Some portal data could not be read: ${failed.join(", ")}`);
+      }
     } catch (err) {
       setLive(false);
       toast.error(`Live data unavailable: ${err instanceof Error ? err.message : String(err)}`);

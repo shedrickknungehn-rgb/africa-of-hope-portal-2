@@ -140,7 +140,12 @@ create policy documents_admin_all on storage.objects for all to authenticated
   using (bucket_id in ('documents', 'certificates') and public.is_portal_admin())
   with check (bucket_id in ('documents', 'certificates') and public.is_portal_admin());
 
--- documents: enforce the same limits the portal applies in the browser
+-- Make sure the older buckets exist too, then give documents the same limits the
+-- portal applies in the browser.
+insert into storage.buckets (id, name, public) values ('documents', 'documents', false)
+on conflict (id) do nothing;
+insert into storage.buckets (id, name, public) values ('certificates', 'certificates', true)
+on conflict (id) do nothing;
 update storage.buckets
 set file_size_limit = 10485760,
     allowed_mime_types = array[
@@ -217,3 +222,23 @@ drop policy if exists programs_admin_all on public.programs;
 create policy programs_admin_all on public.programs for all to authenticated
   using (public.is_portal_admin())
   with check (public.is_portal_admin());
+
+-- 7. Public website settings ---------------------------------------------------------
+-- The public site reads system_settings (academy details and website CMS content)
+-- before anyone signs in. The read policy existed, but the anon role had no table
+-- privilege, which caused "permission denied for table system_settings".
+grant select on public.system_settings to anon;
+grant select on public.programs, public.announcements, public.certificates to anon;
+
+-- Only active admins may change settings and website content.
+drop policy if exists system_settings_portal_all on public.system_settings;
+
+drop policy if exists system_settings_portal_read on public.system_settings;
+create policy system_settings_portal_read on public.system_settings for select to authenticated
+  using (true);
+
+drop policy if exists system_settings_admin_all on public.system_settings;
+create policy system_settings_admin_all on public.system_settings for all to authenticated
+  using (public.is_portal_admin())
+  with check (public.is_portal_admin());
+

@@ -107,8 +107,19 @@ function mapSettings(
   };
 }
 
-/** Reads every portal table and maps the snake_case rows onto the app model. */
-export async function fetchState(): Promise<AppState> {
+export interface FetchResult {
+  state: AppState;
+  /** Tables the current visitor could not read; their slices keep the previous values. */
+  failed: string[];
+}
+
+/**
+ * Reads every portal table and maps the snake_case rows onto the app model.
+ * One unreadable table (for example a permission error for anonymous visitors)
+ * no longer discards everything else: its slice keeps the previous value.
+ * Throws only when no table could be read at all.
+ */
+export async function fetchState(previous: AppState): Promise<FetchResult> {
   const [
     profiles,
     programs,
@@ -137,20 +148,27 @@ export async function fetchState(): Promise<AppState> {
     supabase.from("system_settings").select("*").limit(1).maybeSingle(),
   ]);
 
-  const failure =
-    profiles.error ??
-    programs.error ??
-    modules.error ??
-    cohorts.error ??
-    links.error ??
-    attendance.error ??
-    assignments.error ??
-    submissions.error ??
-    fees.error ??
-    certificates.error ??
-    announcements.error ??
-    settings.error;
-  if (failure) throw new Error(failure.message);
+  const results = {
+    profiles,
+    programs,
+    program_modules: modules,
+    cohorts,
+    cohort_students: links,
+    attendance,
+    assignments,
+    submissions,
+    fee_transactions: fees,
+    certificates,
+    announcements,
+    system_settings: settings,
+  };
+  const failed = Object.entries(results)
+    .filter(([, res]) => res.error)
+    .map(([table]) => table);
+  if (failed.length === Object.keys(results).length) {
+    throw new Error(settings.error?.message ?? "No portal data could be read");
+  }
+  const bad = (...tables: (keyof typeof results)[]) => tables.some((t) => results[t].error);
 
   const linkRows = (links.data ?? []) as Row[];
   const users = ((profiles.data ?? []) as Row[]).map((p) =>
@@ -201,7 +219,7 @@ export async function fetchState(): Promise<AppState> {
     defaultWebsiteSettings,
   );
 
-  return {
+  const state: AppState = {
     users,
     programs: mappedPrograms,
     cohorts: mappedCohorts,
@@ -259,4 +277,22 @@ export async function fetchState(): Promise<AppState> {
     settings: settingsPair.settings,
     websiteSettings: settingsPair.websiteSettings,
   };
+
+  // Never replace real data with empty or default values because one read failed.
+  // This also stops an admin save from overwriting settings with defaults.
+  if (bad("profiles", "cohort_students")) state.users = previous.users;
+  if (bad("programs", "program_modules")) state.programs = previous.programs;
+  if (bad("cohorts", "cohort_students")) state.cohorts = previous.cohorts;
+  if (bad("attendance")) state.attendance = previous.attendance;
+  if (bad("assignments")) state.assignments = previous.assignments;
+  if (bad("submissions")) state.submissions = previous.submissions;
+  if (bad("fee_transactions")) state.fees = previous.fees;
+  if (bad("certificates")) state.certificates = previous.certificates;
+  if (bad("announcements")) state.announcements = previous.announcements;
+  if (bad("system_settings")) {
+    state.settings = previous.settings;
+    state.websiteSettings = previous.websiteSettings;
+  }
+
+  return { state, failed };
 }
