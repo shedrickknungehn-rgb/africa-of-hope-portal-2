@@ -3,9 +3,14 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "dev": "PORT=3000 vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
+    "test": "tsc --noEmit -p tsconfig.tests.json && node --test tests/academicApi.test.ts",
+    "test:academic:db": "bash supabase/tests/run-academic-contract.sh",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "preview": "vite preview --host 0.0.0.0",
