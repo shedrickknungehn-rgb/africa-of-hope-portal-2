@@ -1,26 +1,20 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { Toaster } from "sonner";
 import { AlertTriangle, Clock } from "lucide-react";
 import { AppProvider, useApp } from "./context/AppContext";
+import { AssistantVisibilityProvider } from "./context/AssistantVisibility";
 import { AuthProvider } from "@/auth/AuthProvider";
 import type { User } from "./types";
 import Navigation from "./components/Navigation";
-import {
-  AdminDashboard, StudentDirectory, ProgramBuilder, CohortCoordinator,
-  TeacherDashboard, AttendanceSheet, Gradebook,
-} from "./components/AdminTeacherViews";
-import {
-  StudentPortal, StudentAssignments, FeeRegister, AnnouncementBoard,
-} from "./components/StudentFinancialViews";
-import { CertificateStudio, VerificationPortal } from "./components/CertificateVerification";
-import AdminSystemSettings from "./components/AdminSystemSettings";
-import AdminWebsiteSettings from "./components/AdminWebsiteSettings";
+import { useVisiblePortalViews, getPortalView } from "./portalViews";
 import PublicMarketingSite from "./components/PublicMarketingSite";
 import AuthPortal, { PasswordRecoveryDialog, type AuthTab } from "./components/AuthPortal";
-import ProfilePage from "./components/ProfilePage";
+import HopeAssistant from "./components/assistant/HopeAssistant";
 import { Button } from "@/components/ui/button";
 
 function PendingNotice({ user, onSignOut }: { user: User; onSignOut: () => void }) {
+  const { state } = useApp();
+  const auth = state.websiteSettings.auth;
   const declined = user.status === "Suspended";
   return (
     <div className="grid min-h-[100dvh] place-items-center bg-[#f6f8f7] p-6">
@@ -31,12 +25,14 @@ function PendingNotice({ user, onSignOut }: { user: User; onSignOut: () => void 
             : <Clock className="h-6 w-6 text-amber-600" />}
         </span>
         <h1 className="mt-4 text-lg font-semibold text-slate-900">
-          {declined ? "Application not approved" : "Application under review"}
+          {declined ? "Application not approved" : (auth.pendingTitle || "Application under review")}
         </h1>
         <p className="mt-2 text-sm text-slate-500">
           {declined
             ? `Hello ${user.name}, your enrolment request was declined. Please contact the registrar for guidance.`
-            : `Hello ${user.name}, your registration sits in the administrator approval queue. Portal access unlocks once the registrar approves your file.`}
+            : (auth.pendingBody
+                ? `Hello ${user.name}. ${auth.pendingBody}`
+                : `Hello ${user.name}, your registration sits in the administrator approval queue. Portal access unlocks once the registrar approves your file.`)}
         </p>
         <Button variant="outline" className="mt-5" onClick={onSignOut}>Sign out</Button>
       </div>
@@ -47,6 +43,7 @@ function PendingNotice({ user, onSignOut }: { user: User; onSignOut: () => void 
 function Portal({ onExitToPublic, initialTab }: { onExitToPublic: () => void; initialTab: AuthTab }) {
   const { currentUser, logout } = useApp();
   const [view, setView] = useState("dashboard");
+  const { ctx, views } = useVisiblePortalViews();
 
   useEffect(() => {
     setView("dashboard");
@@ -57,50 +54,40 @@ function Portal({ onExitToPublic, initialTab }: { onExitToPublic: () => void; in
     return <PendingNotice user={currentUser} onSignOut={logout} />;
   }
 
-  const group =
-    currentUser.role === "Teacher" ? "teacher" : currentUser.role === "Student" ? "student" : "admin";
-
-  let content: ReactNode;
-  if (view === "profile") {
-    content = <ProfilePage />;
-  } else if (group === "admin") {
-    content =
-      view === "students" ? <StudentDirectory /> :
-      view === "programs" ? <ProgramBuilder /> :
-      view === "cohorts" ? <CohortCoordinator /> :
-      view === "fees" ? <FeeRegister /> :
-      view === "certificates" ? <CertificateStudio /> :
-      view === "verification" ? <VerificationPortal /> :
-      view === "announcements" ? <AnnouncementBoard /> :
-      view === "website" ? <AdminWebsiteSettings /> :
-      view === "settings" ? <AdminSystemSettings /> :
-      <AdminDashboard />;
-  } else if (group === "teacher") {
-    content =
-      view === "attendance" ? <AttendanceSheet /> :
-      view === "assignments" ? <Gradebook /> :
-      view === "announcements" ? <AnnouncementBoard /> :
-      <TeacherDashboard />;
-  } else {
-    content =
-      view === "assignments" ? <StudentAssignments /> :
-      view === "fees" ? <FeeRegister /> :
-      view === "certificates" ? <CertificateStudio /> :
-      view === "verification" ? <VerificationPortal /> :
-      view === "announcements" ? <AnnouncementBoard /> :
-      <StudentPortal />;
-  }
+  // Fall back to "dashboard" once the current view is no longer visible
+  // (role switch, a permission revoked under the user, etc.).
+  const activeKey = views.some((v) => v.key === view) ? view : "dashboard";
+  const activeView = getPortalView(activeKey);
 
   return (
-    <Navigation view={view} onNavigate={setView} onExitToPublic={onExitToPublic}>
-      {content}
+    <Navigation view={activeKey} onNavigate={setView} onExitToPublic={onExitToPublic}>
+      {activeView?.render(ctx)}
     </Navigation>
   );
 }
 
 function Shell() {
+  const { state } = useApp();
   const [site, setSite] = useState<"public" | "portal">("public");
   const [authTab, setAuthTab] = useState<AuthTab>("signin");
+
+  // Apply the CMS-configured academy name / favicon at runtime so a change
+  // published from the CMS shows up without a rebuild.
+  useEffect(() => {
+    const w = state.websiteSettings;
+    const name = w.academyName || state.settings.academyName;
+    if (name) document.title = name;
+    if (w.faviconUrl) {
+      let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+      if (!link) {
+        link = document.createElement("link");
+        link.rel = "icon";
+        document.head.appendChild(link);
+      }
+      link.href = w.faviconUrl;
+    }
+  }, [state.websiteSettings, state.settings.academyName]);
+
   return (
     <>
       {site === "public" ? (
@@ -114,6 +101,7 @@ function Shell() {
         <Portal onExitToPublic={() => setSite("public")} initialTab={authTab} />
       )}
       <PasswordRecoveryDialog />
+      <HopeAssistant />
     </>
   );
 }
@@ -123,7 +111,9 @@ export default function App() {
     <AuthProvider>
       <AppProvider>
         <Toaster position="top-right" richColors closeButton />
-        <Shell />
+        <AssistantVisibilityProvider>
+          <Shell />
+        </AssistantVisibilityProvider>
       </AppProvider>
     </AuthProvider>
   );

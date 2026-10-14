@@ -1,4 +1,12 @@
-import type { AppState, SystemSettings } from "../types";
+import type { AppState, SystemSettings, WebsiteSettings } from "../types";
+import { DEFAULT_ROLE_PERMISSIONS, PERMISSIONS } from "../lib/permissions";
+
+// Reused across the About and Impact homepage sections and the CTA band so the
+// defaults look like today's live site until an admin uploads replacements.
+const WORKBENCH_IMG =
+  "https://dala-prod-public-storage.s3.eu-west-1.amazonaws.com/generated-images/da27f14e-5252-4f4b-a327-6425a57f1e62/instructor-workbench-94a65568-1791250704601.webp";
+const GRADUATE_IMG =
+  "https://dala-prod-public-storage.s3.eu-west-1.amazonaws.com/generated-images/da27f14e-5252-4f4b-a327-6425a57f1e62/graduate-portrait-692a8c54-1791250703262.webp";
 
 /**
  * Offline defaults only. Every record now lives in Supabase and is hydrated by
@@ -23,9 +31,10 @@ export const defaultSettings: SystemSettings = {
   marketingBanner: "Admissions for the 2025/2026 intake are now open. Apply online in minutes.",
   intakeStatus: "Open",
   featuredProgramIds: [],
+  assistantEnabled: true,
 };
 
-export const defaultWebsiteSettings = {
+export const defaultWebsiteSettings: WebsiteSettings = {
   logoUrl: "",
   faviconUrl: "",
   academyName: "Africa of Hope",
@@ -68,24 +77,24 @@ export const defaultWebsiteSettings = {
   features: [
     {
       id: "feat-1",
-      icon: "Target",
-      title: "Cohort-based learning",
+      icon: "BookOpen",
+      title: "Practical, project-based curriculum",
       description:
-        "Small groups led by practising instructors, from week one to certification.",
+        "Every module ends with a deliverable graded like a real workplace brief, not a multiple-choice quiz.",
     },
     {
       id: "feat-2",
-      icon: "Award",
-      title: "Accredited certification",
+      icon: "Users",
+      title: "Mentors who still practise",
       description:
-        "Every graduate earns a serialised certificate that employers can verify online.",
+        "Instructors are working professionals, so feedback reflects what employers actually look for.",
     },
     {
       id: "feat-3",
-      icon: "Handshake",
-      title: "Industry placement",
+      icon: "Wallet",
+      title: "Transparent, auditable fees",
       description:
-        "Partner employers review top performers for internships and junior roles.",
+        "Every instalment, receipt and balance is visible in your student portal, with no hidden charges.",
     },
   ],
   stats: [
@@ -162,6 +171,187 @@ export const defaultWebsiteSettings = {
   officeHours: "Mon - Fri, 9:00 AM - 5:00 PM",
   applyCtaText: "Apply Online",
   verifyEnabled: true,
+
+  // ── Phase 2 CMS additions ────────────────────────────────────────────────
+  header: {
+    loginText: "Portal login",
+    applyText: "Apply Online",
+    showApply: true,
+  },
+  home: {
+    order: ["about", "features", "impact", "admissions", "verify", "faq", "contact", "cta"],
+    hidden: [],
+    sections: {
+      about: {
+        eyebrow: "Our mission",
+        title: "African excellence, delivered as practical skill.",
+        subtitle: "",
+        body:
+          "Africa of Hope exists to close the distance between classroom learning and real work. We teach in cohorts, grade transparently, keep fees auditable, and issue certificates that any employer can verify online in seconds.",
+        image: WORKBENCH_IMG,
+      },
+      features: {
+        eyebrow: "Why choose us",
+        title: "Reasons students finish strong.",
+        subtitle: "Everything here is designed to get you from your first class to your first job offer.",
+        image: WORKBENCH_IMG,
+      },
+      impact: {
+        eyebrow: "Student success",
+        title: "Student success and impact",
+        subtitle: "Hear it from our graduates and see the numbers behind every cohort.",
+        image: GRADUATE_IMG,
+      },
+      admissions: {
+        eyebrow: "How admission works",
+        title: "Simple steps to your first class.",
+        subtitle: "Everything you need before you apply.",
+        ctaText: "Apply online",
+      },
+      verify: {
+        eyebrow: "Public verification",
+        title: "Verify a certificate in seconds",
+        subtitle: "Enter the serial number printed on an Africa of Hope certificate. No account is required.",
+      },
+      faq: {
+        eyebrow: "FAQ and enquiries",
+        title: "Questions before you apply?",
+        subtitle: "",
+      },
+      contact: {
+        eyebrow: "Visit, call or email",
+        title: "Prefer to talk in person?",
+        subtitle: "Our registrar's office welcomes walk-ins during office hours.",
+      },
+      cta: {
+        eyebrow: "",
+        title: "Ready to build your future? Apply today.",
+        subtitle:
+          "Join the students who have turned an Africa of Hope certificate into a career. Applications take less than five minutes.",
+        ctaText: "Apply online",
+        image: GRADUATE_IMG,
+      },
+    },
+  },
+  aboutPoints: [
+    {
+      id: "pillar-1",
+      icon: "Target",
+      title: "Cohort-based learning",
+      body: "Small groups led by practising instructors, from week one to certification.",
+    },
+    {
+      id: "pillar-2",
+      icon: "Award",
+      title: "Accredited certification",
+      body: "Every graduate earns a serialised certificate that employers can verify online.",
+    },
+    {
+      id: "pillar-3",
+      icon: "Handshake",
+      title: "Industry placement",
+      body: "Partner employers review top performers for internships and junior roles.",
+    },
+  ],
+  partners: [
+    { id: "partner-1", name: "Lagos Tech Hub", logo: "" },
+    { id: "partner-2", name: "Savannah Energy", logo: "" },
+    { id: "partner-3", name: "Nimbus Cloud", logo: "" },
+    { id: "partner-4", name: "Kano Health Trust", logo: "" },
+    { id: "partner-5", name: "Umoja Bank", logo: "" },
+    { id: "partner-6", name: "Accra Digital Works", logo: "" },
+  ],
+  admissionSteps: [
+    {
+      id: "step-1",
+      title: "Create your account",
+      description: "Apply online in minutes and choose the programmes you want to study.",
+      icon: "UserPlus",
+    },
+    {
+      id: "step-2",
+      title: "Upload your documents",
+      description: "Add a valid ID, your school records and a passport photo in your portal.",
+      icon: "FileText",
+    },
+    {
+      id: "step-3",
+      title: "Admissions review",
+      description: "Our team reviews your application and contacts you by email or SMS.",
+      icon: "Search",
+    },
+    {
+      id: "step-4",
+      title: "Pay and join your cohort",
+      description: "Pay your first instalment, get your student ID and attend orientation.",
+      icon: "CalendarCheck",
+    },
+  ],
+  admissionRequirements: [
+    { id: "req-1", text: "Age 16 or older" },
+    { id: "req-2", text: "Valid ID card or passport" },
+    { id: "req-3", text: "Secondary school certificate or equivalent" },
+    { id: "req-4", text: "Passport photograph" },
+  ],
+  verifyPoints: [
+    { id: "vp-1", text: "Free and instant" },
+    { id: "vp-2", text: "No account needed" },
+    { id: "vp-3", text: "Shows name, programme, grade and issue date" },
+  ],
+  footerLinks: [
+    { id: "flink-1", label: "Meet our team", href: "#" },
+    { id: "flink-2", label: "Book a campus visit", href: "#" },
+    { id: "flink-3", label: "Refund policy", href: "#" },
+  ],
+  footerAbout:
+    "Certificates that open doors. Skills that build communities.",
+  assistantLauncherLabel: "Ask Hope",
+  auth: {
+    showcaseImage: "",
+    eyebrow: "Student and staff portal",
+    headline: "Certificates that open doors.",
+    highlight: "Skills that build communities.",
+    description: "",
+    features: [
+      {
+        id: "auth-feat-1",
+        icon: "BadgeCheck",
+        title: "Verifiable certificates",
+        description: "QR-ready credentials employers confirm in seconds.",
+      },
+      {
+        id: "auth-feat-2",
+        icon: "Sparkles",
+        title: "Track your progress",
+        description: "Assignments, grades, attendance and fees in one place.",
+      },
+      {
+        id: "auth-feat-3",
+        icon: "ShieldCheck",
+        title: "Secure by design",
+        description: "Encrypted sessions and registrar-approved access.",
+      },
+    ],
+    stats: [
+      { id: "auth-stat-1", value: "30+", label: "Programmes" },
+      { id: "auth-stat-2", value: "400+", label: "Graduates placed" },
+      { id: "auth-stat-3", value: "96%", label: "Completion rate" },
+    ],
+    testimonial: {
+      quote: "I joined with no coding background. Six months later I was shipping features for a fintech team in Lagos.",
+      name: "Amara N.",
+      program: "Full Stack Web Development",
+      avatar: "",
+    },
+    signinTitle: "Welcome back",
+    signinSubtitle: "Sign in to manage your courses, grades and certificates.",
+    registerTitle: "Create your account",
+    registerSubtitle: "Apply in three quick steps. The registrar reviews every application.",
+    consentText: "By creating an account, you agree to be contacted about your application.",
+    pendingTitle: "Application under review",
+    pendingBody:
+      "Your registration sits in the administrator approval queue. Portal access unlocks once the registrar approves your file.",
+  },
 };
 
 export const initialState: AppState = {
@@ -176,4 +366,6 @@ export const initialState: AppState = {
   announcements: [],
   settings: defaultSettings,
   websiteSettings: defaultWebsiteSettings,
+  rolePermissions: DEFAULT_ROLE_PERMISSIONS as unknown as Record<string, string[]>,
+  permissionCatalogue: PERMISSIONS,
 };

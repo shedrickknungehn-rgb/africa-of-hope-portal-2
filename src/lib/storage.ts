@@ -5,6 +5,7 @@ const MB = 1024 * 1024;
 const AVATAR_BUCKET = "avatars";
 const PROGRAM_IMAGE_BUCKET = "program-images";
 const DOCUMENT_BUCKET = "documents";
+const SITE_ASSETS_BUCKET = "site-assets";
 
 export const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 export const DOCUMENT_TYPES = [
@@ -58,9 +59,12 @@ function safeName(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/-+/g, "-").slice(0, 80) || "file";
 }
 
-/** Supabase storage errors for a missing bucket read "Bucket not found". */
+/**
+ * A missing bucket ("Bucket not found") or missing upload policies
+ * ("row-level security") both mean the storage migration has not run yet.
+ */
 function explain(message: string): string {
-  return /bucket not found/i.test(message)
+  return /bucket not found|row-level security/i.test(message)
     ? "File storage is not set up yet. Ask an administrator to apply the latest database migration."
     : message;
 }
@@ -100,6 +104,10 @@ export const uploadProgramImage = (programId: string, file: File) =>
 
 export const pruneProgramImages = (programId: string, keepUrl?: string) =>
   pruneFolder(PROGRAM_IMAGE_BUCKET, programId, keepUrl);
+
+/** Uploads a CMS image (logo, favicon, hero slide, section photo…) and returns its public URL. */
+export const uploadSiteAsset = (folder: string, file: File) =>
+  uploadPublicImage(SITE_ASSETS_BUCKET, folder, file);
 
 // ── Personal documents (private bucket, "profiles/<uid>/<ts>__<category>__<name>") ──
 

@@ -12,6 +12,7 @@ import type {
   WebsiteSettings,
 } from "../types";
 import { defaultSettings, defaultWebsiteSettings } from "./mockData";
+import { DEFAULT_ROLE_PERMISSIONS, PERMISSIONS, type PermissionKey } from "../lib/permissions";
 
 export type Row = Record<string, unknown>;
 
@@ -68,8 +69,45 @@ export function settingsRow(settings: SystemSettings, websiteSettings: WebsiteSe
     marketing_banner: settings.marketingBanner,
     intake_status: settings.intakeStatus,
     featured_program_ids: settings.featuredProgramIds,
+    assistant_enabled: settings.assistantEnabled,
     website_settings: websiteSettings,
   };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mergeObject<T extends Record<string, unknown>>(defaults: T, raw: unknown): T {
+  if (!isPlainObject(raw)) return defaults;
+  const out: Record<string, unknown> = { ...defaults };
+  for (const key of Object.keys(defaults)) {
+    const defaultValue = defaults[key];
+    const rawValue = raw[key];
+    if (rawValue === undefined) continue;
+    if (Array.isArray(defaultValue)) {
+      // A saved array wins even when empty, so deletes made in the CMS stick.
+      out[key] = Array.isArray(rawValue) ? rawValue : defaultValue;
+    } else if (isPlainObject(defaultValue)) {
+      out[key] = mergeObject(defaultValue as Record<string, unknown>, rawValue);
+    } else {
+      out[key] = rawValue;
+    }
+  }
+  return out as T;
+}
+
+/**
+ * Deep-merges a saved `website_settings` JSON blob onto the current defaults,
+ * so adding a new CMS field (or renaming an old one's defaults) never leaves a
+ * section blank for sites that saved before the field existed. `data:` image
+ * URLs saved by the old ImageBox still render — they're just strings here.
+ */
+export function mergeWebsiteSettings(
+  defaults: WebsiteSettings,
+  raw: unknown,
+): WebsiteSettings {
+  return mergeObject(defaults as unknown as Record<string, unknown>, raw) as unknown as WebsiteSettings;
 }
 
 function mapSettings(
@@ -81,7 +119,7 @@ function mapSettings(
   const raw = row.website_settings;
   const websiteSettings =
     raw && typeof raw === "object" && Object.keys(raw as object).length
-      ? { ...fallbackWebsite, ...(raw as Partial<WebsiteSettings>) }
+      ? mergeWebsiteSettings(fallbackWebsite, raw)
       : fallbackWebsite;
   return {
     settings: {
@@ -102,13 +140,25 @@ function mapSettings(
       marketingBanner: txt(row.marketing_banner, fallback.marketingBanner),
       intakeStatus: txt(row.intake_status, fallback.intakeStatus),
       featuredProgramIds: ids(row.featured_program_ids),
+      assistantEnabled: flag(row, "assistant_enabled", fallback.assistantEnabled),
     },
     websiteSettings,
   };
 }
 
-/** Reads every portal table and maps the snake_case rows onto the app model. */
-export async function fetchState(): Promise<AppState> {
+export interface FetchResult {
+  state: AppState;
+  /** Tables the current visitor could not read; their slices keep the previous values. */
+  failed: string[];
+}
+
+/**
+ * Reads every portal table and maps the snake_case rows onto the app model.
+ * One unreadable table (for example a permission error for anonymous visitors)
+ * no longer discards everything else: its slice keeps the previous value.
+ * Throws only when no table could be read at all.
+ */
+export async function fetchState(previous: AppState): Promise<FetchResult> {
   const [
     profiles,
     programs,
@@ -122,6 +172,8 @@ export async function fetchState(): Promise<AppState> {
     certificates,
     announcements,
     settings,
+    permissionsRows,
+    rolePermissionRows,
   ] = await Promise.all([
     supabase.from("profiles").select("*"),
     supabase.from("programs").select("*").order("created_at", { ascending: true }),
@@ -135,22 +187,33 @@ export async function fetchState(): Promise<AppState> {
     supabase.from("certificates").select("*"),
     supabase.from("announcements").select("*").order("published_date", { ascending: false }),
     supabase.from("system_settings").select("*").limit(1).maybeSingle(),
+    supabase.from("permissions").select("*"),
+    supabase.from("role_permissions").select("*"),
   ]);
 
-  const failure =
-    profiles.error ??
-    programs.error ??
-    modules.error ??
-    cohorts.error ??
-    links.error ??
-    attendance.error ??
-    assignments.error ??
-    submissions.error ??
-    fees.error ??
-    certificates.error ??
-    announcements.error ??
-    settings.error;
-  if (failure) throw new Error(failure.message);
+  const results = {
+    profiles,
+    programs,
+    program_modules: modules,
+    cohorts,
+    cohort_students: links,
+    attendance,
+    assignments,
+    submissions,
+    fee_transactions: fees,
+    certificates,
+    announcements,
+    system_settings: settings,
+    permissions: permissionsRows,
+    role_permissions: rolePermissionRows,
+  };
+  const failed = Object.entries(results)
+    .filter(([, res]) => res.error)
+    .map(([table]) => table);
+  if (failed.length === Object.keys(results).length) {
+    throw new Error(settings.error?.message ?? "No portal data could be read");
+  }
+  const bad = (...tables: (keyof typeof results)[]) => tables.some((t) => results[t].error);
 
   const linkRows = (links.data ?? []) as Row[];
   const users = ((profiles.data ?? []) as Row[]).map((p) =>
@@ -201,7 +264,30 @@ export async function fetchState(): Promise<AppState> {
     defaultWebsiteSettings,
   );
 
-  return {
+  const permissionCatalogue = ((permissionsRows.data ?? []) as Row[]).length
+    ? ((permissionsRows.data ?? []) as Row[])
+        .map((p) => ({
+          key: txt(p.key),
+          group: txt(p.grp),
+          label: txt(p.label),
+          description: txt(p.description),
+          sort: num(p, "sort"),
+        }))
+        .sort((a, b) => a.sort - b.sort)
+    : PERMISSIONS;
+
+  const rolePermissionData = (rolePermissionRows.data ?? []) as Row[];
+  const rolePermissions: Record<string, string[]> = rolePermissionData.length
+    ? rolePermissionData.reduce<Record<string, string[]>>((acc, row) => {
+        const role = txt(row.role);
+        const permission = txt(row.permission);
+        if (!role || !permission) return acc;
+        (acc[role] ??= []).push(permission);
+        return acc;
+      }, {})
+    : (DEFAULT_ROLE_PERMISSIONS as unknown as Record<string, PermissionKey[]>);
+
+  const state: AppState = {
     users,
     programs: mappedPrograms,
     cohorts: mappedCohorts,
@@ -258,5 +344,27 @@ export async function fetchState(): Promise<AppState> {
     })),
     settings: settingsPair.settings,
     websiteSettings: settingsPair.websiteSettings,
+    rolePermissions,
+    permissionCatalogue,
   };
+
+  // Never replace real data with empty or default values because one read failed.
+  // This also stops an admin save from overwriting settings with defaults.
+  if (bad("profiles", "cohort_students")) state.users = previous.users;
+  if (bad("programs", "program_modules")) state.programs = previous.programs;
+  if (bad("cohorts", "cohort_students")) state.cohorts = previous.cohorts;
+  if (bad("attendance")) state.attendance = previous.attendance;
+  if (bad("assignments")) state.assignments = previous.assignments;
+  if (bad("submissions")) state.submissions = previous.submissions;
+  if (bad("fee_transactions")) state.fees = previous.fees;
+  if (bad("certificates")) state.certificates = previous.certificates;
+  if (bad("announcements")) state.announcements = previous.announcements;
+  if (bad("system_settings")) {
+    state.settings = previous.settings;
+    state.websiteSettings = previous.websiteSettings;
+  }
+  if (bad("permissions")) state.permissionCatalogue = previous.permissionCatalogue;
+  if (bad("role_permissions")) state.rolePermissions = previous.rolePermissions;
+
+  return { state, failed };
 }

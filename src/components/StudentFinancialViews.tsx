@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   Banknote, Receipt, Printer, Plus, CalendarDays, Award, Percent, Megaphone,
-  Clock, Check, AlertTriangle, Download, BookOpen,
+  Clock, Check, AlertTriangle, Download, BookOpen, FileQuestion,
 } from "lucide-react";
 import { useApp, formatCurrency, letterGrade } from "../context/AppContext";
-import type { AnnouncementCategory, FeeCategory } from "../types";
+import { usePermission } from "../hooks/usePermission";
+import type { AnnouncementCategory, FeeCategory, Quiz, QuizAttemptSummary } from "../types";
+import { fetchMyQuizAttempts, fetchVisibleQuizzes } from "../lib/quizzes";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -59,8 +61,37 @@ function Ring({ value }: { value: number }) {
   );
 }
 
+/** Compact "quizzes waiting for you" count, used on the student dashboard. Fails silently if the quiz tables aren't migrated yet. */
+function useOpenQuizCount(): number | null {
+  const [count, setCount] = useState<number | null>(null);
+  useEffect(() => {
+    let active = true;
+    Promise.all([fetchVisibleQuizzes(), fetchMyQuizAttempts()])
+      .then(([quizzes, attempts]: [Quiz[], QuizAttemptSummary[]]) => {
+        if (!active) return;
+        const done = new Set(
+          attempts.filter((a) => a.status !== "in_progress").map((a) => a.quizId),
+        );
+        const attemptsByQuiz = new Map<string, number>();
+        for (const a of attempts) attemptsByQuiz.set(a.quizId, (attemptsByQuiz.get(a.quizId) ?? 0) + 1);
+        const now = Date.now();
+        const open = quizzes.filter((q) => {
+          if (q.opensAt && new Date(q.opensAt).getTime() > now) return false;
+          if (q.closesAt && new Date(q.closesAt).getTime() < now) return false;
+          if ((attemptsByQuiz.get(q.id) ?? 0) >= q.maxAttempts && !done.has(q.id)) return false;
+          return !done.has(q.id) || (attemptsByQuiz.get(q.id) ?? 0) < q.maxAttempts;
+        });
+        setCount(open.length);
+      })
+      .catch(() => { if (active) setCount(null); });
+    return () => { active = false; };
+  }, []);
+  return count;
+}
+
 export function StudentPortal() {
   const { state, currentUser } = useApp();
+  const openQuizCount = useOpenQuizCount();
   if (!currentUser) return null;
 
   const cohort = state.cohorts.find((c) => c.id === currentUser.cohortIds[0]);
@@ -81,11 +112,12 @@ export function StudentPortal() {
         subtitle={`${program?.title ?? "Program pending"} / ${currentUser.status}`}
       />
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatCard icon={Percent} label="Attendance" value={`${rate}%`} hint={`${att.length} sessions recorded`} />
         <StatCard icon={Banknote} label="Balance due" value={formatCurrency(Math.max(due - paid, 0))} tone="amber" hint={`${formatCurrency(paid)} paid`} />
         <StatCard icon={BookOpen} label="Assignments" value={myAssignments.length} tone="slate" />
         <StatCard icon={Award} label="Certificates" value={state.certificates.filter((c) => c.studentId === currentUser.id).length} tone="emerald" />
+        <StatCard icon={FileQuestion} label="Quizzes open" value={openQuizCount ?? "—"} tone="amber" hint="Available right now" />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -145,6 +177,55 @@ export function StudentPortal() {
   );
 }
 
+/** Small read-only list of the student's own quiz results, shown under Assignments. */
+function QuizResultsSummary() {
+  const { state } = useApp();
+  const [attempts, setAttempts] = useState<QuizAttemptSummary[]>([]);
+  const [quizzes, setQuizzes] = useState<Quiz[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([fetchMyQuizAttempts(), fetchVisibleQuizzes()])
+      .then(([a, q]) => { if (active) { setAttempts(a); setQuizzes(q); } })
+      .catch(() => { /* quizzes may not be migrated yet; show nothing rather than an error */ })
+      .finally(() => { if (active) setLoaded(true); });
+    return () => { active = false; };
+  }, []);
+
+  const graded = attempts
+    .filter((a) => a.status !== "in_progress")
+    .sort((a, b) => (b.submittedAt ?? "").localeCompare(a.submittedAt ?? ""))
+    .slice(0, 6);
+
+  if (!loaded || graded.length === 0) return null;
+
+  return (
+    <div className="space-y-3">
+      <SectionHeader title="Quiz results" subtitle="Your most recent graded quiz attempts" />
+      <div className="grid gap-3 md:grid-cols-2">
+        {graded.map((a) => {
+          const quiz = quizzes.find((q) => q.id === a.quizId);
+          return (
+            <div key={a.attemptId} className={cn(panelClass, "flex items-center justify-between gap-3 p-4")}>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-slate-900">{quiz?.title ?? "Quiz"}</p>
+                <p className="text-xs text-slate-500">
+                  {a.submittedAt ? new Date(a.submittedAt).toLocaleDateString() : "—"} · Attempt {a.attemptNo}
+                  {state.cohorts.find((c) => c.id === quiz?.cohortId)?.name ? ` · ${state.cohorts.find((c) => c.id === quiz?.cohortId)?.name}` : ""}
+                </p>
+              </div>
+              <Badge className={a.passed ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-700"}>
+                {a.percent ?? 0}%
+              </Badge>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function StudentAssignments() {
   const { state, currentUser } = useApp();
   if (!currentUser) return null;
@@ -200,6 +281,7 @@ export function StudentAssignments() {
           })}
         </div>
       )}
+      <QuizResultsSummary />
     </div>
   );
 }
@@ -214,7 +296,7 @@ const emptyTxn: { studentId: string; category: FeeCategory; amount: string; meth
 
 export function FeeRegister() {
   const { state, currentUser, addFeeTransaction } = useApp();
-  const isStaff = currentUser?.role === "Super Admin" || currentUser?.role === "School Admin";
+  const isStaff = usePermission("fees.manage");
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyTxn);
   const [receipt, setReceipt] = useState<string | null>(null);
@@ -425,7 +507,7 @@ const emptyAnnouncement = { title: "", body: "", category: "Academic" as Announc
 
 export function AnnouncementBoard() {
   const { state, currentUser, addAnnouncement } = useApp();
-  const canPost = currentUser?.role === "Super Admin" || currentUser?.role === "School Admin" || currentUser?.role === "Teacher";
+  const canPost = usePermission("announcements.manage");
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyAnnouncement);
   const [filter, setFilter] = useState<"All" | AnnouncementCategory>("All");

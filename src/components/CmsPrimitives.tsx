@@ -1,6 +1,8 @@
-import { useRef, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Image as ImageIcon, Plus, Trash2, ArrowUp, ArrowDown, Upload, X } from "lucide-react";
+import { Image as ImageIcon, Plus, Trash2, ArrowUp, ArrowDown, Upload, X, Loader2 } from "lucide-react";
+import { uploadSiteAsset } from "@/lib/storage";
+import { validateFile, IMAGE_TYPES, MAX_IMAGE_BYTES } from "@/lib/storage";
 
 /* ---------- tiny id helper ---------- */
 let seq = 0;
@@ -102,27 +104,33 @@ export function ImageBox({
   value,
   onChange,
   round,
+  folder = "misc",
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   round?: boolean;
+  /** Storage sub-folder inside the public "site-assets" bucket, e.g. "logo", "hero". */
+  folder?: string;
 }) {
   const ref = useRef<HTMLInputElement>(null);
-  const handleFile = (file?: File) => {
+  const [busy, setBusy] = useState(false);
+  const handleFile = async (file?: File) => {
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      toast.error("Please choose an image file.");
+    const err = validateFile(file, IMAGE_TYPES, MAX_IMAGE_BYTES);
+    if (err) {
+      toast.error(err);
       return;
     }
-    if (file.size > 2_000_000) {
-      toast.error("Image too large (max 2 MB). Resize it first.");
-      return;
+    setBusy(true);
+    try {
+      const url = await uploadSiteAsset(folder, file);
+      onChange(url);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not upload that image.");
+    } finally {
+      setBusy(false);
     }
-    const reader = new FileReader();
-    reader.onload = () => onChange(String(reader.result ?? ""));
-    reader.onerror = () => toast.error("Could not read that file.");
-    reader.readAsDataURL(file);
   };
   return (
     <div>
@@ -135,7 +143,9 @@ export function ImageBox({
             round ? "rounded-full" : "rounded-xl"
           }`}
         >
-          {value ? (
+          {busy ? (
+            <Loader2 className="h-5 w-5 animate-spin text-emerald-600" />
+          ) : value ? (
             <img src={value} alt="" className="h-full w-full object-cover" />
           ) : (
             <ImageIcon className="h-6 w-6 text-slate-400" />
@@ -145,9 +155,10 @@ export function ImageBox({
           <button
             type="button"
             onClick={() => ref.current?.click()}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white transition hover:bg-emerald-700"
+            disabled={busy}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
           >
-            <Upload className="h-3.5 w-3.5" /> Upload
+            <Upload className="h-3.5 w-3.5" /> {busy ? "Uploading…" : "Upload"}
           </button>
           {value && (
             <button
@@ -245,3 +256,65 @@ export function AddButton({ onClick, label }: { onClick: () => void; label: stri
     </button>
   );
 }
+
+/**
+ * Generic add/reorder/delete list editor for a CMS array field (any shape
+ * with an `id`). Keeps per-tab code in AdminWebsiteSettings down to just a
+ * `renderItem` function instead of repeating up/down/delete wiring everywhere.
+ */
+export function ListEditor<T extends { id: string }>({
+  title,
+  items,
+  onChange,
+  renderItem,
+  newItem,
+  addLabel = "Add item",
+  emptyHint = "Nothing here yet.",
+}: {
+  title: string;
+  items: T[];
+  onChange: (next: T[]) => void;
+  renderItem: (item: T, update: (patch: Partial<T>) => void) => ReactNode;
+  newItem: () => T;
+  addLabel?: string;
+  emptyHint?: string;
+}) {
+  const move = (index: number, dir: -1 | 1) => {
+    const target = index + dir;
+    if (target < 0 || target >= items.length) return;
+    const next = [...items];
+    [next[index], next[target]] = [next[target], next[index]];
+    onChange(next);
+  };
+  const remove = (id: string) => {
+    if (!window.confirm("Delete this item? This cannot be undone until you discard changes.")) return;
+    onChange(items.filter((i) => i.id !== id));
+  };
+  const update = (id: string, patch: Partial<T>) =>
+    onChange(items.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+
+  return (
+    <div className="grid gap-3">
+      {items.length === 0 && (
+        <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+          {emptyHint}
+        </p>
+      )}
+      {items.map((item, index) => (
+        <ListCard
+          key={item.id}
+          index={index}
+          total={items.length}
+          title={title}
+          onUp={() => move(index, -1)}
+          onDown={() => move(index, 1)}
+          onDelete={() => remove(item.id)}
+        >
+          {renderItem(item, (patch) => update(item.id, patch))}
+        </ListCard>
+      ))}
+      <AddButton label={addLabel} onClick={() => onChange([...items, newItem()])} />
+    </div>
+  );
+}
+
