@@ -1,8 +1,8 @@
 -- ROLLBACK-ONLY academic-planning migration contract harness.
 --
 -- Run only with explicit authorization through psql as the database owner.
--- Prefer a disposable database. For production-shaped verification, complete a
--- maintenance-window assessment before execution. The migration and all fixtures are
+-- This repository does not contain the base schema, so use a reviewed
+-- production-shaped database during an approved maintenance window. The migration and all fixtures are
 -- in one transaction; the final ROLLBACK is mandatory. This script intentionally
 -- makes no COMMIT and does not invoke Storage HTTP APIs or create browser users.
 --
@@ -13,7 +13,7 @@
 -- the __txn_academic_test__ prefix, then rolls every DDL/DML change back.
 --
 -- Usage once authorized (do not use `-1`, which would conflict with this BEGIN):
---   psql "$DATABASE_URL" -X -f academic_migration_rollback_contract.sql
+--   DATABASE_URL="postgresql://..." npm run test:academic:db
 --
 -- `ON_ERROR_STOP` ensures a top-level SQL error returns a nonzero status. If psql
 -- disconnects before the explicit ROLLBACK, PostgreSQL rolls back the transaction.
@@ -330,5 +330,5 @@ ROLLBACK;
 \echo ACADEMIC_CONTRACT_RESULT:PASS
 \else
 \echo ACADEMIC_CONTRACT_RESULT:FAIL
-\quit 1
+SELECT 1 / 0;
 \endif

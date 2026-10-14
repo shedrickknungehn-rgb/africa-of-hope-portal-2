@@ -6,7 +6,6 @@ import {
   CalendarClock,
   Check,
   ClipboardCheck,
-  Clock3,
   Download,
   FileUp,
   GraduationCap,

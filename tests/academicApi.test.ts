@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   MAX_TRAINING_MATERIAL_BYTES,
+  SUPPORTED_TRAINING_MATERIAL_MIME_TYPES,
   createAcademicApi,
   explainAcademicError,
   safeTrainingMaterialName,
@@ -85,6 +87,14 @@ test("uses the exact enrollment RPC contracts and null preview fallback", async 
   ]);
 });
 
+test("API methods reject with translated database errors", async () => {
+  const { client } = mockClient({ rpcResponse: { data: null, error: { message: "class_session_schedule_conflict" } } });
+  await assert.rejects(
+    createAcademicApi(client).submit("class_session", "session-1"),
+    /overlaps another approved session/,
+  );
+});
+
 test("maps the complete lesson bundle payload to the atomic RPC", async () => {
   const { client, calls } = mockClient({ rpcResponse: { data: { id: "unit-1" }, error: null } });
   const api = createAcademicApi(client);
@@ -142,6 +152,17 @@ test("material names normalize unsafe characters and stop at 100 characters", ()
   assert.equal(safeTrainingMaterialName("a b/c?.pdf"), "a-b-c-.pdf");
   assert.equal(safeTrainingMaterialName("x".repeat(110)).length, 100);
   assert.equal(trainingMaterialPath("c", "t", "a b.pdf", 42), "c/t/42-a-b.pdf");
+});
+
+test("client material MIME types match the private storage bucket contract", () => {
+  const migration = readFileSync(
+    new URL("../supabase/migrations/20261014030000_academic_planning_enrollment.sql", import.meta.url),
+    "utf8",
+  );
+  const bucketValues = migration.match(/'training-materials', 'training-materials', false, 26214400,\s*array\[(.*?)\]\s*\)/s)?.[1];
+  assert.ok(bucketValues, "training-materials bucket MIME array is missing");
+  const databaseTypes = new Set(Array.from(bucketValues.matchAll(/'([^']+)'/g), (match) => match[1]));
+  assert.deepEqual(databaseTypes, SUPPORTED_TRAINING_MATERIAL_MIME_TYPES);
 });
 
 test("material rows start submitted with deterministic timestamps", async () => {
