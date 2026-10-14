@@ -318,6 +318,12 @@ RESET ROLE;
 -- Surface all assertion outcomes before rollback. This SELECT does not persist.
 SELECT name, passed, detail FROM pg_temp.test_results ORDER BY name;
 SELECT count(*) AS failed_contracts FROM pg_temp.test_results WHERE NOT passed;
+SELECT CASE
+  WHEN count(*) = 0 THEN 'ACADEMIC_CONTRACT_RESULT:PASS'
+  ELSE 'ACADEMIC_CONTRACT_RESULT:FAIL:' || count(*)::text
+END AS academic_contract_result
+FROM pg_temp.test_results
+WHERE NOT passed;
 
 -- Mandatory final statement: all migration DDL, fixture auth accounts, metadata,
 -- RLS policies, bucket changes, triggers, and synthetic domain rows are discarded.
