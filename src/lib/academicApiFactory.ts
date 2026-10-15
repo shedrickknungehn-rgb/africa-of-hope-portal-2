@@ -130,9 +130,121 @@ export function explainAcademicError(error: { message: string; details?: string 
     approved_learning_unit_requires_published_quiz: "Publish the linked quiz in Quiz Builder before lesson approval.",
     decision_note_required: "Add a decision note for a rejection or revision request.",
     active_student_required: "Only an approved active student can submit a course plan.",
+    course_window_closed: "This course's class schedule has ended. Progress and classwork can no longer be recorded.",
+    unit_not_available: "This lesson isn't available yet. Check back once it opens.",
+    classwork_already_submitted: "You already submitted this classwork.",
+    classwork_empty: "Add a response or attach a file before you submit.",
+    available_after_due: "\"Available from\" must be before the lesson's due date.",
   };
   if (friendly[error.message]) return friendly[error.message];
   return error.message;
+}
+
+export type ClassworkStatus = "In Progress" | "Submitted" | "Graded" | "Missing";
+
+export interface ClassworkStart {
+  submission_id: string;
+  started_at: string;
+  deadline_at: string | null;
+  time_limit_minutes: number | null;
+  status: ClassworkStatus;
+  /** Server clock at the call, for client clock-skew correction. */
+  server_now?: string;
+}
+
+export interface ClassworkSubmitResult {
+  submission_id: string;
+  status: ClassworkStatus;
+  is_late: boolean;
+  submitted_at: string;
+}
+
+export interface StudentProgressRow {
+  id: string;
+  student_id: string;
+  cohort_id: string;
+  learning_unit_id: string;
+  status: "not_started" | "in_progress" | "completed";
+  progress_percent: number;
+  completed_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface RecordProgressResult {
+  progress_percent: number;
+  completion_status: string;
+}
+
+export interface GradeComponent {
+  type: "assignment" | "quiz";
+  id: string;
+  title: string;
+  grade_weight: number;
+  percent: number | null;
+}
+
+export interface CourseGradeSummary {
+  student_id: string;
+  cohort_id: string;
+  course_grade: number | null;
+  total_weight: number;
+  assessed_weight: number;
+  components: GradeComponent[];
+}
+
+export interface MissedSession {
+  session_id: string;
+  title: string;
+  session_date: string;
+}
+
+export interface UpcomingDeadline {
+  kind: "classwork" | "quiz" | "unit";
+  id: string;
+  title: string;
+  due_at: string;
+}
+
+export interface OverdueUnit {
+  id: string;
+  title: string;
+  due_at: string;
+}
+
+export interface NextUnit {
+  id: string;
+  title: string;
+  unit_type: LearningUnit["unit_type"];
+  position: number;
+  available_from?: string | null;
+  due_at?: string | null;
+}
+
+export interface MyCourseStatus {
+  cohort_id: string;
+  cohort_name: string;
+  program_id: string;
+  program_title: string;
+  start_date: string;
+  end_date: string;
+  days_remaining: number;
+  window: "upcoming" | "active" | "ended";
+  required_attendance_percent: number;
+  completion_pass_mark: number;
+  sessions_held: number;
+  sessions_attended: number;
+  sessions_missed: number;
+  attendance_percent: number | null;
+  attendance_ok: boolean;
+  missed: MissedSession[];
+  units_total: number;
+  units_completed: number;
+  progress_percent: number;
+  completion_status: string;
+  next_unit: NextUnit | null;
+  overdue_units: OverdueUnit[];
+  upcoming_deadlines: UpcomingDeadline[];
+  grade: CourseGradeSummary;
 }
 
 export const MAX_TRAINING_MATERIAL_BYTES = 25 * 1024 * 1024;
@@ -151,9 +263,13 @@ export function safeTrainingMaterialName(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 100);
 }
 
-export function trainingMaterialPath(cohortId: string, teacherId: string, name: string, timestamp: number): string {
-  return `${cohortId}/${teacherId}/${timestamp}-${safeTrainingMaterialName(name)}`;
+// Shared by training materials and classwork attachments: both live in a bucket scoped by
+// an owning record id (cohort or assignment) and the uploading user's id.
+export function trainingMaterialPath(scopeId: string, uploaderId: string, name: string, timestamp: number): string {
+  return `${scopeId}/${uploaderId}/${timestamp}-${safeTrainingMaterialName(name)}`;
 }
+
+export const TRAINING_MATERIAL_ACCEPT = ".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.zip,image/*,audio/*,video/*";
 
 export function createAcademicApi(client: AcademicApiClient, now: () => number = Date.now) {
   async function rows<T>(table: string, query?: (request: AcademicRowsQuery) => AcademicRowsQuery): Promise<T[]> {
@@ -163,6 +279,24 @@ export function createAcademicApi(client: AcademicApiClient, now: () => number =
     const message = explainAcademicError(error);
     if (message) throw new Error(message);
     return (data ?? []) as T[];
+  }
+
+  async function uploadValidated(
+    bucket: string,
+    scopeId: string,
+    uploaderId: string,
+    file: File,
+    tooLargeMessage: string,
+  ): Promise<{ path: string; mime: string }> {
+    if (file.size > MAX_TRAINING_MATERIAL_BYTES) throw new Error(tooLargeMessage);
+    if (!SUPPORTED_TRAINING_MATERIAL_MIME_TYPES.has(file.type)) throw new Error("This file format is not supported. Use PDF, Office, image, audio, video, text, or ZIP files.");
+    const path = trainingMaterialPath(scopeId, uploaderId, file.name, now());
+    const { error } = await client.storage.from(bucket).upload(path, file, {
+      contentType: file.type || "application/octet-stream",
+      upsert: false,
+    });
+    if (error) throw new Error(explainAcademicError(error) ?? error.message);
+    return { path, mime: file.type || "application/octet-stream" };
   }
 
   return {
@@ -248,21 +382,14 @@ export function createAcademicApi(client: AcademicApiClient, now: () => number =
       p_classwork_weight: assessment.classworkWeight,
       p_quiz_minutes: assessment.quizMinutes,
       p_quiz_weight: assessment.quizWeight,
+      p_available_from: payload.available_from ?? null,
     });
     const message = explainAcademicError(error);
     if (message) throw new Error(message);
     return data as LearningUnit;
   },
   async uploadMaterial(file: File, cohortId: string, teacherId: string): Promise<{ path: string; mime: string }> {
-    if (file.size > MAX_TRAINING_MATERIAL_BYTES) throw new Error("Training materials must be 25 MB or smaller.");
-    if (!SUPPORTED_TRAINING_MATERIAL_MIME_TYPES.has(file.type)) throw new Error("This file format is not supported. Use PDF, Office, image, audio, video, text, or ZIP files.");
-    const path = trainingMaterialPath(cohortId, teacherId, file.name, now());
-    const { error } = await client.storage.from("training-materials").upload(path, file, {
-      contentType: file.type || "application/octet-stream",
-      upsert: false,
-    });
-    if (error) throw new Error(explainAcademicError(error) ?? error.message);
-    return { path, mime: file.type || "application/octet-stream" };
+    return uploadValidated("training-materials", cohortId, teacherId, file, "Training materials must be 25 MB or smaller.");
   },
   async deleteMaterialUpload(path: string) {
     const { error } = await client.storage.from("training-materials").remove([path]);
@@ -312,6 +439,40 @@ export function createAcademicApi(client: AcademicApiClient, now: () => number =
     const { error } = await client.from("notifications").update({ read_at: new Date(now()).toISOString() }).eq("id", id);
     const message = explainAcademicError(error);
     if (message) throw new Error(message);
+  },
+  myProgress(cohortIds?: string[]) {
+    return rows<StudentProgressRow>("student_learning_progress", (q) => (cohortIds?.length ? q.in("cohort_id", cohortIds) : q));
+  },
+  async recordProgress(unitId: string, status: "in_progress" | "completed"): Promise<RecordProgressResult> {
+    const { data, error } = await client.rpc("record_learning_progress", { p_unit_id: unitId, p_status: status });
+    const message = explainAcademicError(error);
+    if (message) throw new Error(message);
+    return data as RecordProgressResult;
+  },
+  async myCourseStatus(): Promise<MyCourseStatus[]> {
+    const { data, error } = await client.rpc("my_course_status");
+    const message = explainAcademicError(error);
+    if (message) throw new Error(message);
+    return (data ?? []) as MyCourseStatus[];
+  },
+  async startClasswork(assignmentId: string): Promise<ClassworkStart> {
+    const { data, error } = await client.rpc("start_classwork", { p_assignment_id: assignmentId });
+    const message = explainAcademicError(error);
+    if (message) throw new Error(message);
+    return data as ClassworkStart;
+  },
+  async submitClasswork(assignmentId: string, responseText: string, attachmentPath: string | null): Promise<ClassworkSubmitResult> {
+    const { data, error } = await client.rpc("submit_classwork", {
+      p_assignment_id: assignmentId,
+      p_response_text: responseText,
+      p_attachment_path: attachmentPath,
+    });
+    const message = explainAcademicError(error);
+    if (message) throw new Error(message);
+    return data as ClassworkSubmitResult;
+  },
+  async uploadClassworkAttachment(assignmentId: string, studentId: string, file: File): Promise<{ path: string; mime: string }> {
+    return uploadValidated("classwork-submissions", assignmentId, studentId, file, "Classwork attachments must be 25 MB or smaller.");
   },
   };
 }

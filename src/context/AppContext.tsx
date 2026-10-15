@@ -558,6 +558,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           date,
           status,
         }));
+        const keptStudentIds = Object.keys(statuses);
         setState((s) => ({
           ...s,
           attendance: [
@@ -568,21 +569,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
         push(
           "Attendance",
           (async () => {
-            const cleared = await supabase
-              .from("attendance")
-              .delete()
-              .eq("cohort_id", cohortId)
-              .eq("attendance_date", date);
-            if (cleared.error) return cleared;
-            return await supabase.from("attendance").insert(
-              rows.map((r) => ({
-                id: r.id,
-                cohort_id: cohortId,
-                student_id: r.studentId,
-                attendance_date: date,
-                status: r.status,
-              })),
-            );
+            // Upsert so existing rows keep their id (cohort_id, student_id, attendance_date is unique);
+            // only students no longer in `statuses` get their row removed.
+            if (rows.length) {
+              const upserted = await supabase.from("attendance").upsert(
+                rows.map((r) => ({
+                  cohort_id: cohortId,
+                  student_id: r.studentId,
+                  attendance_date: date,
+                  status: r.status,
+                })),
+                { onConflict: "cohort_id,student_id,attendance_date" },
+              );
+              if (upserted.error) return upserted;
+            }
+            let clear = supabase.from("attendance").delete().eq("cohort_id", cohortId).eq("attendance_date", date);
+            if (keptStudentIds.length) clear = clear.not("student_id", "in", `(${keptStudentIds.join(",")})`);
+            return await clear;
           })(),
         );
       },

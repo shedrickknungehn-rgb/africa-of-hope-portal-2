@@ -8,7 +8,7 @@ export type Role =
 export type AcademicStatus = "Active" | "Suspended" | "Pending Approval";
 export type AttendanceStatus = "Present" | "Absent" | "Late";
 export type FeeCategory = "Registration" | "Tuition" | "Exam" | "Certificate";
-export type SubmissionStatus = "Submitted" | "Graded" | "Missing";
+export type SubmissionStatus = "In Progress" | "Submitted" | "Graded" | "Missing";
 export type CertificateStatus = "Valid" | "Revoked";
 export type AnnouncementCategory = "Urgent" | "Academic" | "Financial";
 
@@ -77,6 +77,7 @@ export interface Assignment {
   dueDate: string;
   maxMarks: number;
   description: string;
+  timeLimitMinutes?: number | null;
 }
 
 export interface Submission {
@@ -87,6 +88,11 @@ export interface Submission {
   marks: number | null;
   feedback: string;
   status: SubmissionStatus;
+  responseText?: string;
+  attachmentPath?: string | null;
+  startedAt?: string | null;
+  isLate?: boolean;
+  timeSpentSeconds?: number | null;
 }
 
 export interface FeeTransaction {

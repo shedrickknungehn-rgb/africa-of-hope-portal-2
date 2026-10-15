@@ -327,6 +327,7 @@ export async function fetchState(previous: AppState): Promise<FetchResult> {
       dueDate: txt(a.due_date).slice(0, 10),
       maxMarks: num(a, "max_marks", 100),
       description: txt(a.description),
+      timeLimitMinutes: a.time_limit_minutes === null || a.time_limit_minutes === undefined ? null : Number(a.time_limit_minutes),
     })),
     submissions: ((submissions.data ?? []) as Row[]).map((s) => ({
       id: txt(s.id),
@@ -335,7 +336,12 @@ export async function fetchState(previous: AppState): Promise<FetchResult> {
       submittedAt: s.submitted_at ? txt(s.submitted_at) : null,
       marks: s.marks === null || s.marks === undefined ? null : Number(s.marks),
       feedback: txt(s.feedback),
-      status: (txt(s.status, "Missing") as "Submitted" | "Graded" | "Missing") || "Missing",
+      status: (txt(s.status, "Missing") as "In Progress" | "Submitted" | "Graded" | "Missing") || "Missing",
+      responseText: txt(s.response_text),
+      attachmentPath: s.attachment_path ? txt(s.attachment_path) : null,
+      startedAt: s.started_at ? txt(s.started_at) : null,
+      isLate: Boolean(s.is_late),
+      timeSpentSeconds: s.time_spent_seconds === null || s.time_spent_seconds === undefined ? null : Number(s.time_spent_seconds),
     })),
     fees: ((fees.data ?? []) as Row[]).map((f) => ({
       id: txt(f.id),

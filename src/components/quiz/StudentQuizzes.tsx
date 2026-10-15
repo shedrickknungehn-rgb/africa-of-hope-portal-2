@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { FileQuestion, Clock, Repeat, CheckCircle2, PlayCircle } from "lucide-react";
 import type { Quiz, QuizAttemptSummary } from "../../types";
-import { fetchVisibleQuizzes, fetchMyQuizAttempts } from "../../lib/quizzes";
+import { fetchVisibleQuizzes, fetchMyQuizAttempts, groupAttemptsByQuiz, summarizeAttempts } from "../../lib/quizzes";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, SectionHeader, panelClass } from "../Navigation";
@@ -46,15 +46,7 @@ export default function StudentQuizzes() {
 
   useEffect(() => { load(); }, []);
 
-  const byQuiz = useMemo(() => {
-    const map = new Map<string, QuizAttemptSummary[]>();
-    for (const a of attempts) {
-      const list = map.get(a.quizId) ?? [];
-      list.push(a);
-      map.set(a.quizId, list);
-    }
-    return map;
-  }, [attempts]);
+  const byQuiz = useMemo(() => groupAttemptsByQuiz(attempts), [attempts]);
 
   if (playing) {
     return (
@@ -92,12 +84,7 @@ export default function StudentQuizzes() {
       <SectionHeader title="Quizzes" subtitle="Timed checks for your cohort. Submit before the clock runs out." />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {quizzes.map((quiz) => {
-          const mine = (byQuiz.get(quiz.id) ?? []).sort((a, b) => b.attemptNo - a.attemptNo);
-          const inProgress = mine.find((a) => a.status === "in_progress");
-          const graded = mine.filter((a) => a.status !== "in_progress");
-          const best = graded.reduce<QuizAttemptSummary | null>((acc, a) => (acc && (acc.percent ?? -1) >= (a.percent ?? -1) ? acc : a), null);
-          const attemptsUsed = mine.length;
-          const exhausted = attemptsUsed >= quiz.maxAttempts && !inProgress;
+          const { inProgress, best, attemptsUsed, exhausted } = summarizeAttempts(byQuiz.get(quiz.id) ?? [], quiz.maxAttempts);
           const win = windowLabel(quiz);
           const closedNow = quiz.closesAt ? new Date(quiz.closesAt).getTime() < Date.now() : false;
           const notYetOpen = quiz.opensAt ? new Date(quiz.opensAt).getTime() > Date.now() : false;
