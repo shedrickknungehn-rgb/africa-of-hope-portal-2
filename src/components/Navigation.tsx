@@ -347,7 +347,7 @@ export default function Navigation({
 
   return (
     <div className="min-h-[100dvh] bg-[#f6f8f7] text-slate-900">
-      <header className="sticky top-0 z-30 border-b border-emerald-900/10 bg-white/85 backdrop-blur-md print:hidden">
+      <header className="sticky top-0 z-30 border-b border-slate-800 bg-black/95 text-white backdrop-blur-md print:hidden">
         <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-3 px-3 sm:px-4">
           <button
             type="button"
@@ -364,7 +364,7 @@ export default function Navigation({
               academyName={state.websiteSettings.academyName || state.settings.academyName}
               displayName="AOH"
               tagline={state.websiteSettings.tagline || "Institutional Training Academy"}
-              tone="light"
+              tone="dark"
               size="md"
               taglineClassName="hidden sm:block"
             />
