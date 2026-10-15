@@ -81,7 +81,8 @@ export default function BrandLockup({
         <img
           src={logoUrl}
           alt={`${academyName} logo`}
-          className={cn(BOX[size], "shrink-0 object-contain")}
+          className={cn(BOX[size], "shrink-0 bg-transparent object-contain")}
+          style={{ mixBlendMode: tone === "dark" ? "screen" : "multiply" }}
         />
       ) : (
         <span

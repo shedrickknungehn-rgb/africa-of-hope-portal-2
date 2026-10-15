@@ -258,7 +258,7 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
               {...buttonMotionProps}
               className="inline-flex h-10 items-center rounded-xl bg-amber-400 px-4 text-sm font-semibold text-emerald-950 shadow-sm transition hover:bg-amber-300"
             >
-              <LogIn className="mr-1.5 h-4 w-4" /> {w.header.loginText || "Portal login"}
+              <LogIn className="mr-1.5 h-4 w-4" /> Portal
             </motion.button>
             <button
               type="button"
@@ -482,7 +482,7 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
               </li>
               <li>
                 <button type="button" onClick={openLogin} className="inline-flex items-center gap-1.5 transition hover:text-emerald-800">
-                  <ChevronRight className="h-3.5 w-3.5" /> Portal login
+                  <ChevronRight className="h-3.5 w-3.5" /> Portal
                 </button>
               </li>
               <li>
