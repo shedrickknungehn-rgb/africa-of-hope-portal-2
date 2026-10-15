@@ -78,7 +78,7 @@ export default function BlogListPage() {
             transition={{ duration: 0.45 }}
             className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-[11px] font-semibold ring-1 ring-white/15"
           >
-            <Sparkles className="h-3.5 w-3.5 text-amber-400" /> Africa of Hope blog
+            <Sparkles className="h-3.5 w-3.5 text-amber-400" /> AOH blog
           </motion.p>
           <motion.h1
             initial={{ opacity: 0, y: 16 }}

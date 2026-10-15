@@ -219,8 +219,9 @@ function Showcase() {
         <div className="flex items-center gap-3">
           <BrandLockup
             logoUrl={w.logoUrl}
-            academyName={w.academyName || state.settings.academyName}
-            tagline={w.tagline || "Institutional Training Academy"}
+              academyName={w.academyName || state.settings.academyName}
+              displayName="AOH"
+              tagline={w.tagline || "Institutional Training Academy"}
             tone="dark"
             size="md"
           />

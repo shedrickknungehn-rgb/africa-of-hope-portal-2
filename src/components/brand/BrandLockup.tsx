@@ -24,12 +24,6 @@ const ICON: Record<Size, string> = {
   lg: "h-7 w-7",
 };
 
-const BADGE: Record<Size, string> = {
-  sm: "h-3 w-3 text-[6px]",
-  md: "h-4 w-4 text-[8px]",
-  lg: "h-5 w-5 text-[10px]",
-};
-
 const NAME_SIZE: Record<Size, string> = {
   sm: "text-xs",
   md: "text-sm",
@@ -58,6 +52,8 @@ export interface BrandLockupProps {
   tagline?: string;
   size?: Size;
   tone?: Tone;
+  /** Short portal label used where the full institution name is too long. */
+  displayName?: string;
   /** Hide the tagline line entirely (name-only lockup). */
   showTagline?: boolean;
   className?: string;
@@ -76,37 +72,24 @@ export default function BrandLockup({
   className,
   nameClassName,
   taglineClassName,
+  displayName,
 }: BrandLockupProps) {
+  const visibleName = displayName || academyName;
   return (
     <div className={cn("flex min-w-0 items-center gap-3", className)}>
       {logoUrl ? (
         <img
           src={logoUrl}
           alt={`${academyName} logo`}
-          className={cn(
-            BOX[size],
-            "shrink-0 rounded-2xl object-contain ring-1 ring-amber-400/60 bg-white/5",
-          )}
+          className={cn(BOX[size], "shrink-0 object-contain")}
         />
       ) : (
         <span
-          className={cn(
-            BOX[size],
-            "relative grid shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-950 ring-1 ring-amber-400/60",
-          )}
+          className={cn(BOX[size], "grid shrink-0 place-items-center")}
           role="img"
           aria-label={`${academyName} logo`}
         >
-          <GraduationCap className={cn(ICON[size], "text-amber-400")} aria-hidden="true" />
-          <span
-            className={cn(
-              BADGE[size],
-              "absolute -bottom-1 -right-1 grid place-items-center rounded-full bg-amber-400 font-bold text-emerald-950",
-            )}
-            aria-hidden="true"
-          >
-            H
-          </span>
+          <GraduationCap className={cn(ICON[size], tone === "dark" ? "text-amber-400" : "text-emerald-800")} aria-hidden="true" />
         </span>
       )}
       <div className="min-w-0 leading-tight">
@@ -118,7 +101,7 @@ export default function BrandLockup({
             nameClassName,
           )}
         >
-          {academyName}
+          {visibleName}
         </p>
         {showTagline && tagline && (
           <p className={cn(TAGLINE_SIZE[size], "truncate", TONE_TAGLINE[tone], taglineClassName)}>{tagline}</p>

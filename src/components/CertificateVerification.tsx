@@ -30,7 +30,7 @@ function CertificateCard({
   return (
     <div className="print-area relative overflow-hidden rounded-2xl border-[6px] border-double border-amber-400 bg-white p-6 text-center sm:p-8">
       <div className="pointer-events-none absolute inset-3 rounded-xl border border-emerald-900/10" />
-      <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-emerald-800">Africa of Hope</p>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-emerald-800">AFRICA OF HOPE SCHOOL OF PROFESSIONAL STUDIES</p>
       <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-slate-500">Institutional Training Academy</p>
       <h2 className="mt-6 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">{certification}</h2>
       <p className="mt-4 text-[10px] uppercase tracking-widest text-slate-400">Awarded to</p>
@@ -251,7 +251,7 @@ export function VerificationPortal() {
     <div className="space-y-5">
       <SectionHeader
         title="Certificate Verification"
-        subtitle="Confirm the authenticity of any Africa of Hope credential instantly"
+        subtitle="Confirm the authenticity of any AFRICA OF HOPE SCHOOL OF PROFESSIONAL STUDIES credential instantly"
       />
 
       <Reveal className={cn(panelClass, "p-6")}>
@@ -335,7 +335,7 @@ export function VerificationPortal() {
             </div>
           </dl>
           <p className="mt-4 flex items-center gap-2 text-xs text-slate-500">
-            <Award className="h-4 w-4 text-amber-500" /> Serial {found.serial} / Africa of Hope Institutional Training Academy
+            <Award className="h-4 w-4 text-amber-500" /> Serial {found.serial} / AFRICA OF HOPE SCHOOL OF PROFESSIONAL STUDIES Institutional Training Academy
           </p>
         </Reveal>
       )}

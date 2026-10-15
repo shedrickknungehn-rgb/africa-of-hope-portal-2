@@ -14,7 +14,7 @@ const GRADUATE_IMG =
  */
 
 export const defaultSettings: SystemSettings = {
-  academyName: "Africa of Hope",
+  academyName: "AFRICA OF HOPE SCHOOL OF PROFESSIONAL STUDIES",
   motto: "Certificates that open doors. Skills that build communities.",
   contactEmail: "",
   contactPhone: "For Inquiries: +231776679963/088806137 or afrohope033@gmail.com",
@@ -37,7 +37,7 @@ export const defaultSettings: SystemSettings = {
 export const defaultWebsiteSettings: WebsiteSettings = {
   logoUrl: "",
   faviconUrl: "",
-  academyName: "Africa of Hope",
+  academyName: "AFRICA OF HOPE SCHOOL OF PROFESSIONAL STUDIES",
   tagline: "Empowering future tech leaders and innovators.",
   announcementText:
     "Admissions for the 2025/2026 intake are now open. Apply online in minutes.",
