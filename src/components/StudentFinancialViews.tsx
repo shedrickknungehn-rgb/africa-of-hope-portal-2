@@ -472,7 +472,7 @@ export function FeeRegister() {
             <div className="print-area rounded-2xl border border-emerald-900/10 bg-white p-5">
               <div className="flex items-center justify-between border-b border-dashed border-slate-200 pb-3">
                 <div>
-                  <p className="text-sm font-bold uppercase tracking-widest text-emerald-900">Africa of Hope</p>
+                  <p className="text-sm font-bold uppercase tracking-widest text-emerald-900">AFRICA OF HOPE SCHOOL OF PROFESSIONAL STUDIES</p>
                   <p className="text-[11px] text-slate-500">Institutional Training Academy</p>
                 </div>
                 <Receipt className="h-6 w-6 text-amber-500" />

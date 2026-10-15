@@ -121,7 +121,7 @@ export default function HopeAssistant() {
             </span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs font-bold">{label}</p>
-              <p className="truncate text-xs text-emerald-200">Africa of Hope Academy assistant</p>
+              <p className="truncate text-xs text-emerald-200">AOH assistant</p>
             </div>
             <button
               type="button"

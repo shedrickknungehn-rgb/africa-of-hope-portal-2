@@ -132,7 +132,7 @@ export default function PublicMarketingSite({ onEnterPortal }: { onEnterPortal: 
 
   // Document title per view.
   useEffect(() => {
-    const base = displayName || "Africa of Hope";
+    const base = displayName || "AFRICA OF HOPE SCHOOL OF PROFESSIONAL STUDIES";
     if (view.type === "programmes") document.title = `Programmes — ${base}`;
     else if (view.type === "blog" || view.type === "blogPost") document.title = `Blog — ${base}`;
     else document.title = base;

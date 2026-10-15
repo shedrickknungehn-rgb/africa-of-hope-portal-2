@@ -31,7 +31,7 @@ import { DEFAULT_ROLE_PERMISSIONS, type PermissionKey } from "../lib/permissions
 // v5: the roles & permissions migration tightens RLS considerably, so a
 // previous admin's cached profiles/fees/role grants must never leak into
 // the next person's session. Bumping this key discards any v4 cache.
-const CACHE_KEY = "africa-of-hope-portal-cache-v5";
+const CACHE_KEY = "aoh-portal-cache-v6";
 const SESSION_KEY = "africa-of-hope-session-v5";
 
 const LIVE_TABLES = [
@@ -239,8 +239,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
     channel.subscribe();
 
+    const refreshWhenOnline = () => void refresh();
+    window.addEventListener("online", refreshWhenOnline);
+
     return () => {
       cancelled = true;
+      window.removeEventListener("online", refreshWhenOnline);
       void supabase.removeChannel(channel);
     };
   }, [refresh, reloadKey]);
