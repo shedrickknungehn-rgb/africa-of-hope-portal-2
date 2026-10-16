@@ -20,4 +20,18 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    // Context providers, the portal view registry and CMS primitives export
+    // hooks/helpers alongside components by design; fast refresh falls back
+    // to a full reload for these files, which is acceptable.
+    files: [
+      "src/context/**/*.tsx",
+      "src/auth/AuthProvider.tsx",
+      "src/portalViews.tsx",
+      "src/components/CmsPrimitives.tsx",
+    ],
+    rules: {
+      "react-refresh/only-export-components": "off",
+    },
+  },
 ]);

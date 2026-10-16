@@ -7,9 +7,9 @@ export type Json =
   | Json[]
 
 type TableShape = {
-  Row: Record<string, any>
-  Insert: Record<string, any>
-  Update: Record<string, any>
+  Row: Record<string, unknown>
+  Insert: Record<string, unknown>
+  Update: Record<string, unknown>
   Relationships: []
 }
 
@@ -20,16 +20,16 @@ export interface Database {
       [key: string]: TableShape
     }
     Views: {
-      [key: string]: { Row: Record<string, any>; Relationships: [] }
+      [key: string]: { Row: Record<string, unknown>; Relationships: [] }
     }
     Functions: {
-      [key: string]: { Args: Record<string, any>; Returns: any }
+      [key: string]: { Args: Record<string, unknown>; Returns: unknown }
     }
     Enums: {
       [key: string]: string
     }
     CompositeTypes: {
-      [key: string]: Record<string, any>
+      [key: string]: Record<string, unknown>
     }
   }
 }

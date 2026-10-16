@@ -100,7 +100,7 @@ export default function HeroSlider({ onOpenApply, onEnterPortal }: HeroSliderPro
       setCurrent(next);
       setProgress(0);
     },
-    [current]
+    [current, slides.length]
   );
 
   const next = useCallback(() => goTo(current + 1, 1), [current, goTo]);
